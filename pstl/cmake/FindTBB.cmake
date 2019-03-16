@@ -7,7 +7,6 @@
 #===----------------------------------------------------------------------===##
 
 include(FindPackageHandleStandardArgs)
-
 if (NOT TBB_FIND_COMPONENTS)
     set(TBB_FIND_COMPONENTS tbb tbbmalloc)
     foreach (_tbb_component ${TBB_FIND_COMPONENTS})

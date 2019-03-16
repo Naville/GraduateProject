@@ -44,28 +44,8 @@ c  architecture.  If reporting timing results, any of these three may
 c  be used without penalty.
 c---------------------------------------------------------------------
 */
-#ifdef CPU
-#define PSTL_USAGE_WARNINGS 1
-#define PSTL_USE_PARALLEL_POLICIES 1
-#include "pstl/execution"
-#include "pstl/algorithm"
-#include "pstl/numeric"
-#include "pstl/memory"
-#if !__PSTL_CPP17_EXECUTION_POLICIES_PRESENT
-#define PARALLEL __pstl::execution::par
-#define PARALLELUNSEQ __pstl::execution::par
-#else
-#define PARALLEL std::execution::par
-#define PARALLELUNSEQ std::execution::par
-#endif
-#define NS std
-#else
-#include "sycl/execution_policy"
-#include "experimental/algorithm"
-#define PARALLEL sycl::sycl_execution_policy<>()
-#define PARALLELUNSEQ sycl::sycl_execution_policy<>()
-#define NS std::experimental::parallel
-#endif
+
+#include "STL.hpp"
 #include "range.hpp"
 #include <range/v3/all.hpp>
 #include "npb-C.h"
@@ -86,25 +66,24 @@ static int lastrow;
 static int firstcol;
 static int lastcol;
 
-/* common /main_int_mem/ */
-static int colidx[NZ + 1];     /* colidx[1:NZ] */
-static int rowstr[NA + 1 + 1]; /* rowstr[1:NA+1] */
-static int iv[2 * NA + 1 + 1]; /* iv[1:2*NA+1] */
-static int arow[NZ + 1];       /* arow[1:NZ] */
-static int acol[NZ + 1];       /* acol[1:NZ] */
-
-/* common /main_flt_mem/ */
-static double v[NA + 1 + 1]; /* v[1:NA+1] */
-static double aelt[NZ + 1];  /* aelt[1:NZ] */
+#ifdef CPU
+std::array<int,NZ+1> colidx;    /* colidx[1:NZ] */
+std::array<int,NA+1+1> rowstr; /* rowstr[1:NA+1] */
+std::array<int,2 * NA + 1 + 1> iv; /* iv[1:2*NA+1] */
+std::array<int,NZ+1> arow;       /* arow[1:NZ] */
+std::array<int,NZ+1> acol;       /* acol[1:NZ] */
+std::array<double,NA+1+1> v; /* v[1:NA+1] */
+std::array<double,NZ+1> aelt[NZ + 1];  /* aelt[1:NZ] */
 static double a[NZ + 1];     /* a[1:NZ] */
 static double x[NA + 2 + 1]; /* x[1:NA+2] */
 static double z[NA + 2 + 1]; /* z[1:NA+2] */
 static double p[NA + 2 + 1]; /* p[1:NA+2] */
 static double q[NA + 2 + 1]; /* q[1:NA+2] */
 static double r[NA + 2 + 1]; /* r[1:NA+2] */
-// static double w[NA+2+1];	/* w[1:NA+2] */
+#elif defined(GPU)
 
-/* common /urando/ */
+#endif
+
 static double amult;
 static double tran;
 
