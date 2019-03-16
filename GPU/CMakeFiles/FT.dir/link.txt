@@ -1,0 +1,1 @@
+/Users/naville/Downloads/LLVM7/bin/clang++  -fopenmp -Xpreprocessor -fopenmp -I/usr/local/opt/libomp/include -O3 -DNDEBUG -O3 -D NDEBUG -Wno-writable-strings -fopenmp -Wl,-search_paths_first -Wl,-headerpad_max_install_names   CMakeFiles/FT.dir/FT/ft.cpp.o  -o FT libCore.a 

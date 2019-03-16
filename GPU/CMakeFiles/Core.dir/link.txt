@@ -1,0 +1,2 @@
+/usr/bin/ar qc libCore.a  CMakeFiles/Core.dir/lib/c_print_results.c.o CMakeFiles/Core.dir/lib/c_randdp.c.o CMakeFiles/Core.dir/lib/c_timers.c.o CMakeFiles/Core.dir/lib/wtime.c.o
+/usr/bin/ranlib libCore.a

@@ -1,0 +1,30 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+../include/wtime.h
+
+/Users/naville/Desktop/L4Project/lib/c_print_results.c
+stdlib.h
+-
+stdio.h
+-
+
+/Users/naville/Desktop/L4Project/lib/c_randdp.c
+
+/Users/naville/Desktop/L4Project/lib/c_timers.c
+wtime.h
+/Users/naville/Desktop/L4Project/lib/wtime.h
+stdlib.h
+-
+
+/Users/naville/Desktop/L4Project/lib/wtime.c
+wtime.h
+/Users/naville/Desktop/L4Project/lib/wtime.h
+sys/time.h
+-
+

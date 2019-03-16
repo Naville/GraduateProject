@@ -1,0 +1,13 @@
+[submodule "range-v3"]
+	path = range-v3
+	url = https://github.com/ericniebler/range-v3.git
+[submodule "SyclParallelSTL"]
+	path = SyclParallelSTL
+	url = https://github.com/KhronosGroup/SyclParallelSTL.git
+[submodule "pstl"]
+	path = pstl
+	url = https://github.com/llvm-mirror/pstl.git
+[submodule "tbb"]
+	path = tbb
+	url = https://github.com/01org/tbb.git
+	branch = tbb_2019
