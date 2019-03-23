@@ -142,7 +142,7 @@ int main(int argc, char **argv) {
     cls = 'U';
   }
 
-  printf("\n\n NAS SEQ Benchmarks 3.0 structured OpenMP C version"
+  printf("\n\n" NPBVERSION
          " - CG Benchmark\n");
   printf(" Size: %10d\n", NA);
   printf(" Iterations: %5d\n", NITER);
@@ -395,10 +395,9 @@ C        on the Cray t3d - overall speed of code is 1.5 times faster.
 /* rolled version */
       MAKE_RANGE_UNDEF(1,lastrow - firstrow + 2,jrange);
       NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-        double sum = 0.0;
         MAKE_RANGE(rowstr[j],rowstr[j + 1],k2);
-        NS::for_each(NESTPARUNSEQ,k2.begin(), k2.end(), [&](auto k) -> void {
-          sum = sum + a[k] * p[colidx[k]];
+        double sum = std::accumulate(k2.begin(),k2.end(),0.0,[=](double i,int k)->double{
+          return i+a[k] * p[colidx[k]];
         });
         q[j] = sum;
       });

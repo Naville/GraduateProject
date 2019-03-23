@@ -26,16 +26,15 @@
   #include "pstl/numeric"
   #include "pstl/memory"
   #if !__PSTL_CPP17_EXECUTION_POLICIES_PRESENT
-  #define SEQ __pstl::execution::seq
-  #define UNSEQ __pstl::execution::unseq
-  #define PARALLEL __pstl::execution::par
-  #define PARALLELUNSEQ __pstl::execution::par_unseq
+  #define PS __pstl::execution
   #else
-  #define SEQ std::execution::seq
-  #define UNSEQ std:execution::unseq
-  #define PARALLEL std::execution::par
-  #define PARALLELUNSEQ std::execution::par_unseq
+  #define PS std::execution
   #endif
+  #define SEQ PS::seq
+  #define UNSEQ PS::unseq
+  #define PARALLEL PS::par
+  #define PARALLELUNSEQ PS::par_unseq
+
   #define NS std
 #elif defined(GPU)
   #ifdef USE_THRUST

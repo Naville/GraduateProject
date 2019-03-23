@@ -279,7 +279,7 @@ void setup(void) {
 
   /*--------------------------------------------------------------------
   c-------------------------------------------------------------------*/
-  printf("\n\n NAS Parallel Benchmarks 3.0 structured OpenMP C version"
+  printf("\n\n" NPBVERSION 
          " - FT Benchmark\n\n");
 
   niter = NITER_DEFAULT;

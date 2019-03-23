@@ -53,7 +53,7 @@ int main(int argc, char **argv) {
   c      defaults from parameters
   c-------------------------------------------------------------------*/
 
-  printf("\n\n NAS Parallel Benchmarks 3.0 structured OpenMP C version"
+  printf("\n\n" NPBVERSION
          " - BT Benchmark\n\n");
 
   fp = fopen("inputbt.data", "r");
