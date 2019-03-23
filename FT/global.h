@@ -1,5 +1,3 @@
-#include "npbparams.h"
-
 
 /*
 c If processor array is 1x1 -> 0D grid decomposition

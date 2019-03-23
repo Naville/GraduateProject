@@ -1,3 +1,5 @@
+#ifndef L4P_RANGE_EXT
+#define L4P_RANGE_EXT
 #include <range/v3/all.hpp>
 namespace ranges {
 template<class Rng>
@@ -62,3 +64,4 @@ slide(std::size_t step, std::size_t size)
     });
 }
 }
+#endif

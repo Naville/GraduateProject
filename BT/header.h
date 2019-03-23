@@ -17,8 +17,6 @@ c                     config file
 c      niter_default: default number of iterations for this problem size
 --------------------------------------------------------------------*/
 
-#include "npbparams.h"
-
 #define	AA		0
 #define BB		1
 #define CC		2

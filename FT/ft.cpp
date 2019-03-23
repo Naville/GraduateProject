@@ -1,72 +1,34 @@
-/*--------------------------------------------------------------------
-
-  NAS Parallel Benchmarks 3.0 structured OpenMP C versions - FT
-
-  This benchmark is an OpenMP C version of the NPB FT code.
-
-  The OpenMP C 2.3 versions are derived by RWCP from the serial Fortran versions
-  in "NPB 2.3-serial" developed by NAS. 3.0 translation is performed by the
-UVSQ.
-
-  Permission to use, copy, distribute and modify this software for any
-  purpose with or without fee is hereby granted.
-  This software is provided "as is" without express or implied warranty.
-
-  Information on OpenMP activities at RWCP is available at:
-
-           http://pdplab.trc.rwcp.or.jp/pdperf/Omni/
-
-  Information on NAS Parallel Benchmarks 2.3 is available at:
-
-           http://www.nas.nasa.gov/NAS/NPB/
-
---------------------------------------------------------------------*/
-/*--------------------------------------------------------------------
-
-  Authors: D. Bailey
-           W. Saphir
-
-  OpenMP C version: S. Satoh
-
-  3.0 structure translation: M. Popov
-
---------------------------------------------------------------------*/
-#include "range.hpp"
-#include <range/v3/all.hpp>
-/* global variables */
-#include "npb-C.h"
 #include "STL.hpp"
+#include "npb-C.h"
 #include "global.h"
 #include <iostream>
+#ifdef USE_RANGES
 using namespace ranges;
+#endif
 
 /* function declarations */
 void evolve(dcomplex u0[NZ][NY][NX], dcomplex u1[NZ][NY][NX], int t,
-                   int indexmap[NZ][NY][NX], int d[3]);
+            int indexmap[NZ][NY][NX], int d[3]);
 void compute_initial_conditions(dcomplex u0[NZ][NY][NX], int d[3]);
 void ipow46(double a, int exponent, double *result);
 void setup(void);
 void compute_indexmap(int indexmap[NZ][NY][NX], int d[3]);
 void print_timers(void);
 void fft(int dir, dcomplex x1[NZ][NY][NX], dcomplex x2[NZ][NY][NX]);
-void cffts1(int is, int d[3], dcomplex x[NZ][NY][NX],
-                   dcomplex xout[NZ][NY][NX], dcomplex y0[NX][FFTBLOCKPAD],
-                   dcomplex y1[NX][FFTBLOCKPAD]);
-void cffts2(int is, int d[3], dcomplex x[NZ][NY][NX],
-                   dcomplex xout[NZ][NY][NX], dcomplex y0[NX][FFTBLOCKPAD],
-                   dcomplex y1[NX][FFTBLOCKPAD]);
-void cffts3(int is, int d[3], dcomplex x[NZ][NY][NX],
-                   dcomplex xout[NZ][NY][NX], dcomplex y0[NX][FFTBLOCKPAD],
-                   dcomplex y1[NX][FFTBLOCKPAD]);
+void cffts1(int is, int d[3], dcomplex x[NZ][NY][NX], dcomplex xout[NZ][NY][NX],
+            dcomplex y0[NX][FFTBLOCKPAD], dcomplex y1[NX][FFTBLOCKPAD]);
+void cffts2(int is, int d[3], dcomplex x[NZ][NY][NX], dcomplex xout[NZ][NY][NX],
+            dcomplex y0[NX][FFTBLOCKPAD], dcomplex y1[NX][FFTBLOCKPAD]);
+void cffts3(int is, int d[3], dcomplex x[NZ][NY][NX], dcomplex xout[NZ][NY][NX],
+            dcomplex y0[NX][FFTBLOCKPAD], dcomplex y1[NX][FFTBLOCKPAD]);
 void fft_init(int n);
 void cfftz(int is, int m, int n, dcomplex x[NX][FFTBLOCKPAD],
-                  dcomplex y[NX][FFTBLOCKPAD]);
+           dcomplex y[NX][FFTBLOCKPAD]);
 void fftz2(int is, int l, int m, int n, int ny, int ny1, dcomplex u[NX],
-                  dcomplex x[NX][FFTBLOCKPAD], dcomplex y[NX][FFTBLOCKPAD]);
+           dcomplex x[NX][FFTBLOCKPAD], dcomplex y[NX][FFTBLOCKPAD]);
 static int ilog2(int n);
 void checksum(int i, dcomplex u1[NZ][NY][NX], int d[3]);
-void verify(int d1, int d2, int d3, int nt, boolean *verified,
-                   char *cls);
+void verify(int d1, int d2, int d3, int nt, boolean *verified, char *cls);
 
 /*--------------------------------------------------------------------
 c FT benchmark
@@ -76,9 +38,6 @@ int main(int argc, char **argv) {
 
   /*c-------------------------------------------------------------------
   c-------------------------------------------------------------------*/
-
-  int i, ierr;
-
   /*------------------------------------------------------------------
   c u0, u1, u2 are the main arrays in the problem.
   c Depending on the decomposition, these arrays will have different
@@ -98,11 +57,8 @@ int main(int argc, char **argv) {
   c cache problems, since all array sizes are powers of two.
   c-------------------------------------------------------------------*/
   static dcomplex u0[NZ][NY][NX];
-  static dcomplex pad1[3];
   static dcomplex u1[NZ][NY][NX];
-  static dcomplex pad2[3];
   static dcomplex u2[NZ][NY][NX];
-  static dcomplex pad3[3];
   static int indexmap[NZ][NY][NX];
 
   int iter;
@@ -116,7 +72,7 @@ int main(int argc, char **argv) {
   c This reduces variable startup costs, which is important for such a
   c short benchmark. The other NPB 2 implementations are similar.
   c-------------------------------------------------------------------*/
-  for (i = 0; i < T_MAX; i++) {
+  for (int i = 0; i < T_MAX; i++) {
     timer_clear(i);
   }
   setup();
@@ -132,7 +88,7 @@ int main(int argc, char **argv) {
   c Start over from the beginning. Note that all operations must
   c be timed, in contrast to other benchmarks.
   c-------------------------------------------------------------------*/
-  for (i = 0; i < T_MAX; i++) {
+  for (int i = 0; i < T_MAX; i++) {
     timer_clear(i);
   }
 
@@ -209,7 +165,7 @@ int main(int argc, char **argv) {
 c-------------------------------------------------------------------*/
 
 void evolve(dcomplex u0[NZ][NY][NX], dcomplex u1[NZ][NY][NX], int t,
-                   int indexmap[NZ][NY][NX], int d[3]) {
+            int indexmap[NZ][NY][NX], int d[3]) {
 
   /*--------------------------------------------------------------------
   c-------------------------------------------------------------------*/
@@ -217,21 +173,15 @@ void evolve(dcomplex u0[NZ][NY][NX], dcomplex u1[NZ][NY][NX], int t,
   /*--------------------------------------------------------------------
   c evolve u0 -> u1 (t time steps) in fourier space
   c-------------------------------------------------------------------*/
-
-  auto irange = view::ints(0, d[0]);
-  auto jrange = view::ints(0, d[1]);
-  auto krange = view::ints(0, d[2]);
-  /*std::vector<int> irange(d[0]);
-  std::iota(irange.begin(),irange.end(),0);
-  std::vector<int> jrange(d[1]);
-  std::iota(jrange.begin(),jrange.end(),0);
-  std::vector<int> krange(d[2]);
-  std::iota(krange.begin(),krange.end(),0);*/
-  NS::for_each(PARALLEL,irange.begin(), irange.end(), [&](auto i) -> void {
-    NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-      NS::for_each(PARALLELUNSEQ,krange.begin(), krange.end(), [&](auto k) -> void {
-        crmul(u1[k][j][i], u0[k][j][i], ex[t * indexmap[k][j][i]]);
-      });
+  MAKE_RANGE(0, d[0], irange);
+  MAKE_RANGE(0, d[1], jrange);
+  MAKE_RANGE(0, d[2], krange);
+  NS::for_each(PARALLEL, irange.begin(), irange.end(), [&](auto i) -> void {
+    NS::for_each(NESTPAR, jrange.begin(), jrange.end(), [&](auto j) -> void {
+      NS::for_each(NESTPARUNSEQ, krange.begin(), krange.end(),
+                   [&](auto k) -> void {
+                     crmul(u1[k][j][i], u0[k][j][i], ex[t * indexmap[k][j][i]]);
+                   });
     });
   });
 }
@@ -329,9 +279,6 @@ void setup(void) {
 
   /*--------------------------------------------------------------------
   c-------------------------------------------------------------------*/
-
-  int ierr, i, j, fstatus;
-
   printf("\n\n NAS Parallel Benchmarks 3.0 structured OpenMP C version"
          " - FT Benchmark\n\n");
 
@@ -339,34 +286,13 @@ void setup(void) {
 
   printf(" Size                : %3dx%3dx%3d\n", NX, NY, NZ);
   printf(" Iterations          :     %7d\n", niter);
-
-  /* 1004 format(' Number of processes :     ', i7)
-   1005 format(' Processor array     :     ', i3, 'x', i3)
-   1006 format(' WARNING: compiled for ', i5, ' processes. ',
-       >       ' Will not verify. ')*/
-
-  /*for (i = 0;i < 3 ; i++) {
-      dims[i][0] = NX;
-      dims[i][1] = NY;
-      dims[i][2] = NZ;
-}*/
-  auto irange = view::ints(0, 3);
-  NS::for_each(PARALLELUNSEQ,irange.begin(), irange.end(), [&](int i) -> void {
+  MAKE_RANGE(0, 3, irange);
+  NS::for_each(PARALLELUNSEQ, irange.begin(), irange.end(), [&](int i) -> void {
     dims[i][0] = NX;
     dims[i][1] = NY;
     dims[i][2] = NZ;
   });
-
-  /*for (i = 0; i < 3; i++) {
-      xstart[i] = 1;
-      xend[i]   = NX;
-      ystart[i] = 1;
-      yend[i]   = NY;
-      zstart[i] = 1;
-      zend[i]   = NZ;
-  }*/
-
-  NS::for_each(PARALLELUNSEQ,irange.begin(), irange.end(), [&](int i) -> void {
+  NS::for_each(PARALLELUNSEQ, irange.begin(), irange.end(), [&](int i) -> void {
     xstart[i] = 1;
     xend[i] = NX;
     ystart[i] = 1;
@@ -421,24 +347,22 @@ void compute_indexmap(int indexmap[NZ][NY][NX], int d[3]) {
   c The following magic formula does the trick:
   c mod(i-1+n/2, n) - n/2
   c-------------------------------------------------------------------*/
-
-  /*#pragma omp parallel for default(shared) private(i, j, k, ii, ii2, jj, ij2,
-    kk) for (i = 0; i < dims[2][0]; i++) {*/
-  auto irange = view::ints(0, dims[2][0]);
-  NS::for_each(PARALLEL,irange.begin(), irange.end(), [&](auto i) -> void {
+  MAKE_RANGE(0, dims[2][0], irange);
+  MAKE_RANGE(0, dims[2][1], jrange);
+  MAKE_RANGE(0, dims[2][2], krange);
+  NS::for_each(PARALLEL, irange.begin(), irange.end(), [&](auto i) -> void {
     int ii = (i + 1 + xstart[2] - 2 + NX / 2) % NX - NX / 2;
     int ii2 = ii * ii;
-    auto jrange = view::ints(0, dims[2][1]);
-    NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
+    NS::for_each(NESTPAR, jrange.begin(), jrange.end(), [&](auto j) -> void {
       // for (j = 0; j < dims[2][1]; j++) {
       int jj = (j + 1 + ystart[2] - 2 + NY / 2) % NY - NY / 2;
       int ij2 = jj * jj + ii2;
-      auto krange = view::ints(0, dims[2][2]);
       // for (k = 0; k < dims[2][2]; k++) {
-      NS::for_each(PARALLELUNSEQ,krange.begin(), krange.end(), [&](auto k) -> void {
-        int kk = (k + 1 + zstart[2] - 2 + NZ / 2) % NZ - NZ / 2;
-        indexmap[k][j][i] = kk * kk + ij2;
-      });
+      NS::for_each(NESTPARUNSEQ, krange.begin(), krange.end(),
+                   [&](auto k) -> void {
+                     int kk = (k + 1 + zstart[2] - 2 + NZ / 2) % NZ - NZ / 2;
+                     indexmap[k][j][i] = kk * kk + ij2;
+                   });
     });
   });
 
@@ -449,13 +373,9 @@ void compute_indexmap(int indexmap[NZ][NY][NX], int d[3]) {
 
   ex[0] = 1.0;
   ex[1] = exp(ap);
-
-  /*for (i = 2; i <= EXPMAX; i++) {
-    ex[i] = ex[i - 1] * ex[1];
-  }*/
-  irange = view::ints(2, EXPMAX + 1);
-  NS::for_each(PARALLEL,irange.begin(), irange.end(),
-                [&](auto i) -> void { ex[i] = ex[i - 1] * ex[1]; });
+  MAKE_RANGE_UNDEF(2, EXPMAX + 1, irange);
+  NS::for_each(PARALLEL, irange.begin(), irange.end(),
+               [&](auto i) -> void { ex[i] = ex[i - 1] * ex[1]; });
 }
 
 /*--------------------------------------------------------------------
@@ -511,39 +431,40 @@ void fft(int dir, dcomplex x1[NZ][NY][NX], dcomplex x2[NZ][NY][NX]) {
 /*--------------------------------------------------------------------
 c-------------------------------------------------------------------*/
 
-void cffts1(int is, int d[3], dcomplex x[NZ][NY][NX],
-                   dcomplex xout[NZ][NY][NX], dcomplex y0[NX][FFTBLOCKPAD],
-                   dcomplex y1[NX][FFTBLOCKPAD]) {
+void cffts1(int is, int d[3], dcomplex x[NZ][NY][NX], dcomplex xout[NZ][NY][NX],
+            dcomplex y0[NX][FFTBLOCKPAD], dcomplex y1[NX][FFTBLOCKPAD]) {
 
   /*--------------------------------------------------------------------
   c-------------------------------------------------------------------*/
 
   int logd[3];
   // int i, j, k, jj;
-  auto irange = view::ints(0, 3);
-  NS::for_each(PARALLEL,irange.begin(), irange.end(),
-                [&](auto i) -> void { logd[i] = ilog2(d[i]); });
-  irange = view::ints(0, d[0]);
-  auto jrange = view::ints(0, fftblock);
-  auto krange = view::ints(0, d[2]);
-  auto jjrange = view::ints(0, ((d[1] - fftblock) / fftblock) + 1);
+  MAKE_RANGE(0, 3, irange);
+  NS::for_each(PARALLEL, irange.begin(), irange.end(),
+               [&](auto i) -> void { logd[i] = ilog2(d[i]); });
+  MAKE_RANGE_UNDEF(0, d[0], irange);
+  MAKE_RANGE(0, fftblock, jrange);
+  MAKE_RANGE(0, d[2], krange);
+  MAKE_RANGE(0, ((d[1] - fftblock) / fftblock) + 1, jjrange);
 
-  NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto k) -> void {
-    NS::for_each(PARALLEL,jjrange.begin(), jjrange.end(), [&](auto jj) -> void {
+  NS::for_each(PARALLEL, krange.begin(), krange.end(), [&](auto k) -> void {
+    NS::for_each(NESTPAR, jjrange.begin(), jjrange.end(), [&](auto jj) -> void {
       jj = jj * fftblock;
-      NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-        NS::for_each(PARALLELUNSEQ,irange.begin(), irange.end(), [&](auto i) -> void {
-          y0[i][j].real = x[k][j + jj][i].real;
+      NS::for_each(NESTPAR, jrange.begin(), jrange.end(), [&](auto j) -> void {
+        NS::for_each(NESTPARUNSEQ, irange.begin(), irange.end(),
+                     [&](auto i) -> void {
+                       y0[i][j].real = x[k][j + jj][i].real;
 
-          y0[i][j].imag = x[k][j + jj][i].imag;
-        });
+                       y0[i][j].imag = x[k][j + jj][i].imag;
+                     });
       });
       cfftz(is, logd[0], d[0], y0, y1);
-      NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-        NS::for_each(PARALLELUNSEQ,irange.begin(), irange.end(), [&](auto i) -> void {
-          xout[k][j + jj][i].real = y0[i][j].real;
-          xout[k][j + jj][i].imag = y0[i][j].imag;
-        });
+      NS::for_each(NESTPAR, jrange.begin(), jrange.end(), [&](auto j) -> void {
+        NS::for_each(NESTPARUNSEQ, irange.begin(), irange.end(),
+                     [&](auto i) -> void {
+                       xout[k][j + jj][i].real = y0[i][j].real;
+                       xout[k][j + jj][i].imag = y0[i][j].imag;
+                     });
       });
     });
   });
@@ -553,79 +474,76 @@ void cffts1(int is, int d[3], dcomplex x[NZ][NY][NX],
 /*--------------------------------------------------------------------
 c-------------------------------------------------------------------*/
 
-void cffts2(int is, int d[3], dcomplex x[NZ][NY][NX],
-                   dcomplex xout[NZ][NY][NX], dcomplex y0[NX][FFTBLOCKPAD],
-                   dcomplex y1[NX][FFTBLOCKPAD]) {
+void cffts2(int is, int d[3], dcomplex x[NZ][NY][NX], dcomplex xout[NZ][NY][NX],
+            dcomplex y0[NX][FFTBLOCKPAD], dcomplex y1[NX][FFTBLOCKPAD]) {
 
   /*--------------------------------------------------------------------
   c-------------------------------------------------------------------*/
 
   int logd[3];
-  int i, j, k, ii;
-
-  auto irange = view::ints(0, 3);
-  NS::for_each(PARALLEL,irange.begin(), irange.end(),
-                [&](auto i) -> void { logd[i] = ilog2(d[i]); });
-		auto krange = view::ints(0, d[2]);
-		auto iirange = view::ints(0, ((d[0] - fftblock) / fftblock) + 1);
-			NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto k) -> void {
-		    NS::for_each(PARALLEL,iirange.begin(), iirange.end(), [&](auto ii) -> void {
-        irange = view::ints(0, d[1]);
-        auto jrange = view::ints(0, fftblock);
-        NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-          NS::for_each(PARALLELUNSEQ,irange.begin(), irange.end(), [&](auto i) -> void {
-            y0[j][i].real = x[k][j][i + ii].real;
-            y0[j][i].imag = x[k][j][i + ii].imag;
-          });
-        });
-        cfftz(is, logd[1], d[1], y0, y1);
-        irange = view::ints(0, fftblock);
-        jrange = view::ints(0, d[1]);
-        NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-          NS::for_each(PARALLELUNSEQ,irange.begin(), irange.end(), [&](auto i) -> void {
-            xout[k][j][i + ii].real = y0[j][i].real;
-            xout[k][j][i + ii].imag = y0[j][i].imag;
-          });
-        });
+  MAKE_RANGE(0, 3, irange);
+  NS::for_each(PARALLEL, irange.begin(), irange.end(),
+               [&](auto i) -> void { logd[i] = ilog2(d[i]); });
+  MAKE_RANGE(0, d[2], krange);
+  MAKE_RANGE(0, ((d[0] - fftblock) / fftblock) + 1, iirange);
+  MAKE_RANGE_UNDEF(0, d[1], irange);
+  MAKE_RANGE(0, fftblock, jrange);
+  NS::for_each(PARALLEL, krange.begin(), krange.end(), [&](auto k) -> void {
+    NS::for_each(NESTPAR, iirange.begin(), iirange.end(), [&](auto ii) -> void {
+      NS::for_each(NESTPAR, jrange.begin(), jrange.end(), [&](auto j) -> void {
+        NS::for_each(NESTPARUNSEQ, irange.begin(), irange.end(),
+                     [&](auto i) -> void {
+                       y0[j][i].real = x[k][j][i + ii].real;
+                       y0[j][i].imag = x[k][j][i + ii].imag;
+                     });
+      });
+      cfftz(is, logd[1], d[1], y0, y1);
+      NS::for_each(NESTPAR, irange.begin(), irange.end(), [&](auto j) -> void {
+        NS::for_each(NESTPARUNSEQ, jrange.begin(), jrange.end(),
+                     [&](auto i) -> void {
+                       xout[k][j][i + ii].real = y0[j][i].real;
+                       xout[k][j][i + ii].imag = y0[j][i].imag;
+                     });
       });
     });
+  });
 }
 /*--------------------------------------------------------------------
 c-------------------------------------------------------------------*/
 
-void cffts3(int is, int d[3], dcomplex x[NZ][NY][NX],
-                   dcomplex xout[NZ][NY][NX], dcomplex y0[NX][FFTBLOCKPAD],
-                   dcomplex y1[NX][FFTBLOCKPAD]) {
+void cffts3(int is, int d[3], dcomplex x[NZ][NY][NX], dcomplex xout[NZ][NY][NX],
+            dcomplex y0[NX][FFTBLOCKPAD], dcomplex y1[NX][FFTBLOCKPAD]) {
 
   /*--------------------------------------------------------------------
   c-------------------------------------------------------------------*/
 
   int logd[3];
-  int i, j, k, ii;
-  auto irange = view::ints(0, 3);
-  NS::for_each(PARALLEL,irange.begin(), irange.end(),
-                [&](auto i) -> void { logd[i] = ilog2(d[i]); });
-  auto jrange = view::ints(0, d[1]);
-  NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-    int ii = 0;
-		auto iirange = view::ints(0, ((d[0] - fftblock) / fftblock) + 1);
-		NS::for_each(PARALLEL,iirange.begin(), iirange.end(), [&](auto ii) -> void {
-      auto krange = view::ints(0, d[2]);
-      NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto k) -> void {
-        auto irange2 = view::ints(0, fftblock);
-        NS::for_each(PARALLELUNSEQ,irange2.begin(), irange2.end(), [&](auto i) -> void {
-          y0[k][i].real = x[k][j][i + ii].real;
-          y0[k][i].imag = x[k][j][i + ii].imag;
-        });
+  MAKE_RANGE(0, 3, irange);
+  MAKE_RANGE(0, d[1], jrange);
+  MAKE_RANGE(0, d[2], krange);
+    MAKE_RANGE(0, ((d[0] - fftblock) / fftblock) + 1, iirange);
+    MAKE_RANGE(0, fftblock, irange2);
+    MAKE_RANGE(0, fftblock, i3range);
+  NS::for_each(PARALLEL, irange.begin(), irange.end(),
+               [&](auto i) -> void { logd[i] = ilog2(d[i]); });
+  NS::for_each(PARALLEL, jrange.begin(), jrange.end(), [&](auto j) -> void {
+    NS::for_each(NESTPAR, iirange.begin(), iirange.end(), [&](auto ii) -> void {
+
+      NS::for_each(NESTPAR, krange.begin(), krange.end(), [&](auto k) -> void {
+
+        NS::for_each(NESTPARUNSEQ, irange2.begin(), irange2.end(),
+                     [&](auto i) -> void {
+                       y0[k][i].real = x[k][j][i + ii].real;
+                       y0[k][i].imag = x[k][j][i + ii].imag;
+                     });
       });
       cfftz(is, logd[2], d[2], y0, y1);
-      krange = view::ints(0, d[2]);
-      irange = view::ints(0, fftblock);
-      NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto k) -> void {
-        NS::for_each(PARALLELUNSEQ,irange.begin(), irange.end(), [&](auto i) -> void {
-          xout[k][j][i + ii].real = y0[k][i].real;
-          xout[k][j][i + ii].imag = y0[k][i].imag;
-        });
+      NS::for_each(NESTPAR, krange.begin(), krange.end(), [&](auto k) -> void {
+        NS::for_each(NESTPARUNSEQ, i3range.begin(), i3range.end(),
+                     [&](auto i) -> void {
+                       xout[k][j][i + ii].real = y0[k][i].real;
+                       xout[k][j][i + ii].imag = y0[k][i].imag;
+                     });
       });
     });
   });
@@ -675,7 +593,7 @@ void fft_init(int n) {
 c-------------------------------------------------------------------*/
 
 void cfftz(int is, int m, int n, dcomplex x[NX][FFTBLOCKPAD],
-                  dcomplex y[NX][FFTBLOCKPAD]) {
+           dcomplex y[NX][FFTBLOCKPAD]) {
 
   /*--------------------------------------------------------------------
   c-------------------------------------------------------------------*/
@@ -729,7 +647,7 @@ void cfftz(int is, int m, int n, dcomplex x[NX][FFTBLOCKPAD],
 c-------------------------------------------------------------------*/
 
 void fftz2(int is, int l, int m, int n, int ny, int ny1, dcomplex u[NX],
-                  dcomplex x[NX][FFTBLOCKPAD], dcomplex y[NX][FFTBLOCKPAD]) {
+           dcomplex x[NX][FFTBLOCKPAD], dcomplex y[NX][FFTBLOCKPAD]) {
 
   /*--------------------------------------------------------------------
   c-------------------------------------------------------------------*/
@@ -738,8 +656,8 @@ void fftz2(int is, int l, int m, int n, int ny, int ny1, dcomplex u[NX],
   c   Performs the L-th iteration of the second variant of the Stockham FFT.
   c-------------------------------------------------------------------*/
 
-  int k, n1, li, lj, lk, ku, i, j, i11, i12, i21, i22;
-  dcomplex u1, x11, x21;
+  int n1, li, lj, lk, ku, i11, i12, i21, i22;
+  dcomplex u1;
 
   /*--------------------------------------------------------------------
   c   Set initial parameters.
@@ -758,8 +676,9 @@ void fftz2(int is, int l, int m, int n, int ny, int ny1, dcomplex u[NX],
   }
   lj = 2 * lk;
   ku = li;
-
-  for (i = 0; i < li; i++) {
+  MAKE_RANGE(0, lk, krange);
+  MAKE_RANGE(0, ny, jrange);
+  for (int i = 0; i < li; i++) {
 
     i11 = i * lk;
     i12 = i11 + n1;
@@ -776,25 +695,24 @@ void fftz2(int is, int l, int m, int n, int ny, int ny1, dcomplex u[NX],
     /*--------------------------------------------------------------------
     c   This loop is vectorizable.
     c-------------------------------------------------------------------*/
-    //for (k = 0; k < lk; k++) {
-    auto krange = view::ints(0, lk);
-    auto jrange = view::ints(0, ny);
-    NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto k) -> void {
-      //for (j = 0; j < ny; j++) {
-    NS::for_each(PARALLELUNSEQ,jrange.begin(), jrange.end(), [&](auto j) -> void {
-        double x11real, x11imag;
-        double x21real, x21imag;
-        x11real = x[i11 + k][j].real;
-        x11imag = x[i11 + k][j].imag;
-        x21real = x[i12 + k][j].real;
-        x21imag = x[i12 + k][j].imag;
-        y[i21 + k][j].real = x11real + x21real;
-        y[i21 + k][j].imag = x11imag + x21imag;
-        y[i22 + k][j].real =
-            u1.real * (x11real - x21real) - u1.imag * (x11imag - x21imag);
-        y[i22 + k][j].imag =
-            u1.real * (x11imag - x21imag) + u1.imag * (x11real - x21real);
-      });
+    // for (k = 0; k < lk; k++) {
+    NS::for_each(PARALLEL, krange.begin(), krange.end(), [&](auto k) -> void {
+      // for (j = 0; j < ny; j++) {
+      NS::for_each(
+          NESTPARUNSEQ, jrange.begin(), jrange.end(), [&](auto j) -> void {
+            double x11real, x11imag;
+            double x21real, x21imag;
+            x11real = x[i11 + k][j].real;
+            x11imag = x[i11 + k][j].imag;
+            x21real = x[i12 + k][j].real;
+            x21imag = x[i12 + k][j].imag;
+            y[i21 + k][j].real = x11real + x21real;
+            y[i21 + k][j].imag = x11imag + x21imag;
+            y[i22 + k][j].real =
+                u1.real * (x11real - x21real) - u1.imag * (x11imag - x21imag);
+            y[i22 + k][j].imag =
+                u1.real * (x11imag - x21imag) + u1.imag * (x11real - x21real);
+          });
     });
   }
 }
@@ -827,49 +745,47 @@ c-------------------------------------------------------------------*/
 
 void checksum(int i, dcomplex u1[NZ][NY][NX], int d[3]) {
 
+  /*--------------------------------------------------------------------
+  c-------------------------------------------------------------------*/
 
-    /*--------------------------------------------------------------------
-    c-------------------------------------------------------------------*/
+  int q, r, s;
+  dcomplex chk;
 
-    int j, q, r, s, ierr;
-    dcomplex chk, allchk;
-
-    chk.real = 0.0;
-    chk.imag = 0.0;
-  auto jrange=view::ints(1,1025);
-    NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-      q = j % NX + 1;
-      if (q >= xstart[0] && q <= xend[0]) {
-        r = (3 * j) % NY + 1;
-        if (r >= ystart[0] && r <= yend[0]) {
-          s = (5 * j) % NZ + 1;
-          if (s >= zstart[0] && s <= zend[0]) {
-            cadd(chk, chk, u1[s - zstart[0]][r - ystart[0]][q - xstart[0]]);
-          }
+  chk.real = 0.0;
+  chk.imag = 0.0;
+  MAKE_RANGE(1, 1025, jrange);
+  NS::for_each(PARALLEL, jrange.begin(), jrange.end(), [&](auto j) -> void {
+    q = j % NX + 1;
+    if (q >= xstart[0] && q <= xend[0]) {
+      r = (3 * j) % NY + 1;
+      if (r >= ystart[0] && r <= yend[0]) {
+        s = (5 * j) % NZ + 1;
+        if (s >= zstart[0] && s <= zend[0]) {
+          cadd(chk, chk, u1[s - zstart[0]][r - ystart[0]][q - xstart[0]]);
         }
       }
-    });
-      sums[i].real += chk.real;
-      sums[i].imag += chk.imag;
-    {
-      sums[i].real = sums[i].real / (double)(NTOTAL);
-      sums[i].imag = sums[i].imag / (double)(NTOTAL);
-
-      printf("T = %5d     Checksum = %22.12e %22.12e\n", i, sums[i].real,
-             sums[i].imag);
     }
+  });
+  sums[i].real += chk.real;
+  sums[i].imag += chk.imag;
+  {
+    sums[i].real = sums[i].real / (double)(NTOTAL);
+    sums[i].imag = sums[i].imag / (double)(NTOTAL);
+
+    printf("T = %5d     Checksum = %22.12e %22.12e\n", i, sums[i].real,
+           sums[i].imag);
+  }
 }
 
 /*--------------------------------------------------------------------
 c-------------------------------------------------------------------*/
 
-void verify(int d1, int d2, int d3, int nt, boolean *verified,
-                   char *cls) {
+void verify(int d1, int d2, int d3, int nt, boolean *verified, char *cls) {
 
   /*--------------------------------------------------------------------
   c-------------------------------------------------------------------*/
 
-  int ierr, size, i;
+  int i;
   double err, epsilon;
 
   /*--------------------------------------------------------------------

@@ -1,54 +1,19 @@
-/*--------------------------------------------------------------------
-
-  NAS Parallel Benchmarks 3.0 structured OpenMP C versions - BT
-
-  This benchmark is an OpenMP C version of the NPB BT code.
-
-  The OpenMP C 2.3 versions are derived by RWCP from the serial Fortran versions
-  in "NPB 2.3-serial" developed by NAS. 3.0 translation is performed by the
-UVSQ.
-
-  Permission to use, copy, distribute and modify this software for any
-  purpose with or without fee is hereby granted.
-  This software is provided "as is" without express or implied warranty.
-
-  Information on OpenMP activities at RWCP is available at:
-
-           http://pdplab.trc.rwcp.or.jp/pdperf/Omni/
-
-  Information on NAS Parallel Benchmarks 2.3 is available at:
-
-           http://www.nas.nasa.gov/NAS/NPB/
-
---------------------------------------------------------------------*/
-/*--------------------------------------------------------------------
-
-  Authors: R. Van der Wijngaart
-           T. Harris
-           M. Yarrow
-
-  OpenMP C version: S. Satoh
-
-  3.0 structure translation: M. Popov
-
---------------------------------------------------------------------*/
 #include "STL.hpp"
-#include "range.hpp"
-#include <range/v3/all.hpp>
 /* global variables */
 #include "header.h"
 #include "npb-C.h"
 #include <iostream>
 #include <type_traits>
+#ifdef USE_RANGES
 using namespace ranges;
+#endif
 /* function declarations */
 void add(void);
 void adi(void);
 void error_norm(double rms[5]);
 void rhs_norm(double rms[5]);
 void exact_rhs(void);
-void exact_solution(double xi, double eta, double zeta,
-			   double dtemp[5]);
+void exact_solution(double xi, double eta, double zeta, double dtemp[5]);
 void initialize(void);
 void lhsinit(void);
 void lhsx(void);
@@ -61,8 +26,7 @@ void x_solve(void);
 void x_backsubstitute(void);
 void x_solve_cell(void);
 void matvec_sub(double ablock[5][5], double avec[5], double bvec[5]);
-void matmul_sub(double ablock[5][5], double bblock[5][5],
-		       double cblock[5][5]);
+void matmul_sub(double ablock[5][5], double bblock[5][5], double cblock[5][5]);
 void binvcrhs(double lhs[5][5], double c[5][5], double r[5]);
 void binvrhs(double lhs[5][5], double r[5]);
 void y_solve(void);
@@ -170,16 +134,17 @@ void add(void) {
   /*--------------------------------------------------------------------
   c     addition of update to the std::vector u
   c-------------------------------------------------------------------*/
-  auto irange = view::ints(1, grid_points[0] - 1);
-  auto jrange = view::ints(1, grid_points[1] - 1);
-  auto krange = view::ints(1, grid_points[2] - 1);
-  auto mrange = view::ints(0, 6);
-  NS::for_each(PARALLEL,irange.begin(), irange.end(), [&](auto I) -> void {
-    NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto J) -> void {
-      NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto K) -> void {
-        NS::for_each(PARALLELUNSEQ,mrange.begin(), mrange.end(), [&](auto M) -> void {
-          u[I][J][K][M] = u[I][J][K][M] + rhs[I][J][K][M];
-        });
+  MAKE_RANGE(1, grid_points[0] - 1, irange)
+  MAKE_RANGE(1, grid_points[1] - 1, jrange)
+  MAKE_RANGE(1, grid_points[2] - 1, krange)
+  MAKE_RANGE(0, 6, mrange)
+  NS::for_each(PARALLEL, irange.begin(), irange.end(), [&](auto I) -> void {
+    NS::for_each(NESTPAR, jrange.begin(), jrange.end(), [&](auto J) -> void {
+      NS::for_each(NESTPAR, krange.begin(), krange.end(), [&](auto K) -> void {
+        NS::for_each(NESTPARUNSEQ, mrange.begin(), mrange.end(),
+                     [&](auto M) -> void {
+                       u[I][J][K][M] = u[I][J][K][M] + rhs[I][J][K][M];
+                     });
       });
     });
   });
@@ -205,30 +170,26 @@ void error_norm(double rms[5]) {
   c     this function computes the norm of the difference between the
   c     computed solution and the exact solution
   c-------------------------------------------------------------------*/
+  MAKE_RANGE(0, 5, mrange)
+  NS::for_each(PARALLEL, mrange.begin(), mrange.end(),
+               [&](auto i) -> void { rms[i] = 0.0; });
+  MAKE_RANGE(1, grid_points[0] - 1, gp0)
+  MAKE_RANGE(1, grid_points[1] - 1, gp1)
+  MAKE_RANGE(1, grid_points[2] - 1, gp2)
 
-  // int i, j, k, m, d;
-  // double xi, eta, zeta, u_exact[5], add;
-
-  auto mrange = view::ints(0, 5);
-  NS::for_each(PARALLEL,mrange.begin(), mrange.end(),
-                [&](auto i) -> void { rms[i] = 0.0; });
-
-  auto gp0 = view::ints(1, grid_points[0] - 1);
-  auto gp1 = view::ints(1, grid_points[1] - 1);
-  auto gp2 = view::ints(1, grid_points[2] - 1);
-
-  NS::for_each(PARALLEL,gp0.begin(), gp0.end(), [&](auto i) -> void {
+  NS::for_each(PARALLEL, gp0.begin(), gp0.end(), [&](auto i) -> void {
     double xi = i * dnxm1;
-    NS::for_each(PARALLEL,gp1.begin(), gp1.end(), [&](auto j) -> void {
+    NS::for_each(NESTPAR, gp1.begin(), gp1.end(), [&](auto j) -> void {
       double eta = j * dnym1;
-      NS::for_each(PARALLEL,gp2.begin(), gp2.end(), [&](auto k) -> void {
+      NS::for_each(NESTPAR, gp2.begin(), gp2.end(), [&](auto k) -> void {
         double zeta = k * dnzm1;
         double u_exact[5];
         exact_solution(xi, eta, zeta, u_exact);
-        NS::for_each(PARALLELUNSEQ,mrange.begin(), mrange.end(), [&](auto m) -> void {
-          double add = u[i][j][k][m] - u_exact[m];
-          rms[m] = rms[m] + add * add;
-        });
+        NS::for_each(NESTPARUNSEQ, mrange.begin(), mrange.end(),
+                     [&](auto m) -> void {
+                       double add = u[i][j][k][m] - u_exact[m];
+                       rms[m] = rms[m] + add * add;
+                     });
       });
     });
   });
@@ -241,30 +202,31 @@ void rhs_norm(double rms[5]) {
 
   /*--------------------------------------------------------------------
   --------------------------------------------------------------------*/
+  MAKE_RANGE(0, 5, mrange)
+  MAKE_RANGE(0, 3, drange)
+  MAKE_RANGE(1, grid_points[0] - 1, gp0)
+  MAKE_RANGE(1, grid_points[1] - 1, gp1)
+  MAKE_RANGE(1, grid_points[2] - 1, gp2)
+  NS::for_each(PARALLEL, mrange.begin(), mrange.end(),
+               [&](auto i) -> void { rms[i] = 0.0; });
 
-  auto mrange = view::ints(0, 5);
-  auto drange = view::ints(0, 3);
-  NS::for_each(PARALLEL,mrange.begin(), mrange.end(),
-                [&](auto i) -> void { rms[i] = 0.0; });
-
-  auto gp0 = view::ints(1, grid_points[0] - 1);
-  auto gp1 = view::ints(1, grid_points[1] - 1);
-  auto gp2 = view::ints(1, grid_points[2] - 1);
-  NS::for_each(PARALLEL,gp0.begin(), gp0.end(), [&](auto i) -> void {
-    NS::for_each(PARALLEL,gp1.begin(), gp1.end(), [&](auto j) -> void {
-      NS::for_each(PARALLEL,gp2.begin(), gp2.end(), [&](auto k) -> void {
-        NS::for_each(PARALLELUNSEQ,mrange.begin(), mrange.end(), [&](auto m) -> void {
-          double add = rhs[i][j][k][m];
-          rms[m] = rms[m] + add * add;
-        });
+  NS::for_each(PARALLEL, gp0.begin(), gp0.end(), [&](auto i) -> void {
+    NS::for_each(NESTPAR, gp1.begin(), gp1.end(), [&](auto j) -> void {
+      NS::for_each(NESTPAR, gp2.begin(), gp2.end(), [&](auto k) -> void {
+        NS::for_each(NESTPARUNSEQ, mrange.begin(), mrange.end(),
+                     [&](auto m) -> void {
+                       double add = rhs[i][j][k][m];
+                       rms[m] = rms[m] + add * add;
+                     });
       });
     });
   });
 
-  NS::for_each(PARALLEL,mrange.begin(), mrange.end(), [&](auto m) -> void {
-    NS::for_each(PARALLELUNSEQ,drange.begin(), drange.end(), [&](auto d) -> void {
-      rms[m] = rms[m] / (double)(grid_points[d] - 2);
-    });
+  NS::for_each(PARALLEL, mrange.begin(), mrange.end(), [&](auto m) -> void {
+    NS::for_each(NESTPARUNSEQ, drange.begin(), drange.end(),
+                 [&](auto d) -> void {
+                   rms[m] = rms[m] / (double)(grid_points[d] - 2);
+                 });
     rms[m] = sqrt(rms[m]);
   });
 }
@@ -285,42 +247,44 @@ void exact_rhs(void) {
     /*--------------------------------------------------------------------
     c     initialize
     c-------------------------------------------------------------------*/
-    auto irange=view::ints(0,grid_points[0]);
-    auto jrange=view::ints(0,grid_points[1]);
-    auto krange=view::ints(0,grid_points[2]);
-    auto mrange=view::ints(0,5);
-    NS::for_each(PARALLEL,irange.begin(), irange.end(), [&](auto i) -> void {
-      NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-        NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto k) -> void {
-            NS::for_each(PARALLELUNSEQ,mrange.begin(), mrange.end(), [&](auto m) -> void {
-          forcing[i][j][k][m] = 0.0;
-        });
-    });
-    });
+    MAKE_RANGE(0, grid_points[0], irange)
+    MAKE_RANGE(0, grid_points[1], jrange)
+    MAKE_RANGE(0, grid_points[2], krange)
+    MAKE_RANGE(0, 5, mrange)
+    NS::for_each(PARALLEL, irange.begin(), irange.end(), [&](auto i) -> void {
+      NS::for_each(NESTPAR, jrange.begin(), jrange.end(), [&](auto j) -> void {
+        NS::for_each(
+            NESTPAR, krange.begin(), krange.end(), [&](auto k) -> void {
+              NS::for_each(NESTPARUNSEQ, mrange.begin(), mrange.end(),
+                           [&](auto m) -> void { forcing[i][j][k][m] = 0.0; });
+            });
+      });
     });
 
     /*--------------------------------------------------------------------
     c     xi-direction flux differences
     c-------------------------------------------------------------------*/
-
-    auto gp0 = view::ints(1, grid_points[0] - 1);
-    auto gp1 = view::ints(1, grid_points[1] - 1);
-    auto gp2 = view::ints(1, grid_points[2] - 1);
-    mrange = view::ints(0, 5);
-    auto nrange = view::ints(1, 5);
-    NS::for_each(PARALLEL,gp1.begin(), gp1.end(), [&](auto j) -> void {
+    MAKE_RANGE(1, grid_points[0] - 1, gp0)
+    MAKE_RANGE(1, grid_points[1] - 1, gp1)
+    MAKE_RANGE(1, grid_points[2] - 1, gp2)
+    MAKE_RANGE_UNDEF(0, 5, mrange)
+    MAKE_RANGE(1, 5, nrange)
+    MAKE_RANGE(3, grid_points[0] - 3 * 1, tmprange);
+    MAKE_RANGE(0, grid_points[1], r3)
+    MAKE_RANGE(3, grid_points[1] - 3 * 1, mrange2);
+    NS::for_each(PARALLEL, gp1.begin(), gp1.end(), [&](auto j) -> void {
       double eta = j * dnym1;
-      NS::for_each(PARALLEL,gp2.begin(), gp2.end(), [&](auto k) -> void {
+      NS::for_each(NESTPAR, gp2.begin(), gp2.end(), [&](auto k) -> void {
         double zeta = k * dnzm1;
-        NS::for_each(PARALLEL,gp0.begin(), gp0.end(), [&](auto i) -> void {
+        NS::for_each(NESTPAR, gp0.begin(), gp0.end(), [&](auto i) -> void {
           double xi = i * dnxm1;
           double dtemp[5];
           exact_solution(xi, eta, zeta, const_cast<double *>(&dtemp[0]));
-          NS::for_each(PARALLEL,mrange.begin(), mrange.end(),
-                        [&](auto m) -> void { ue[i][m] = dtemp[m]; });
+          NS::for_each(NESTPAR, mrange.begin(), mrange.end(),
+                       [&](auto m) -> void { ue[i][m] = dtemp[m]; });
           double dtpp = 1.0 / dtemp[0];
-          NS::for_each(PARALLELUNSEQ,nrange.begin(), nrange.end(),
-                        [&](auto n) -> void { buf[i][n] = dtpp * dtemp[n]; });
+          NS::for_each(NESTPARUNSEQ, nrange.begin(), nrange.end(),
+                       [&](auto n) -> void { buf[i][n] = dtpp * dtemp[n]; });
 
           cuf[i] = buf[i][1] * buf[i][1];
           buf[i][0] = cuf[i] + buf[i][2] * buf[i][2] + buf[i][3] * buf[i][3];
@@ -328,7 +292,7 @@ void exact_rhs(void) {
                         buf[i][3] * ue[i][3]);
         });
 
-        NS::for_each(PARALLELUNSEQ,gp0.begin(), gp0.end(), [&](auto i) -> void {
+        NS::for_each(NESTPARUNSEQ, gp0.begin(), gp0.end(), [&](auto i) -> void {
           auto im1 = i - 1;
           auto ip1 = i + 1;
 
@@ -364,61 +328,65 @@ void exact_rhs(void) {
               xxcon5 * (buf[ip1][4] - 2.0 * buf[i][4] + buf[im1][4]) +
               dx5tx1 * (ue[ip1][4] - 2.0 * ue[i][4] + ue[im1][4]);
         });
-        NS::for_each(PARALLELUNSEQ,mrange.begin(), mrange.end(), [&](int m) -> void {
-          int i = 1;
-          forcing[i][j][k][m] =
-              forcing[i][j][k][m] -
-              dssp * (5.0 * ue[i][m] - 4.0 * ue[i + 1][m] + ue[i + 2][m]);
-          i = 2;
-          forcing[i][j][k][m] = forcing[i][j][k][m] -
-                                dssp * (-4.0 * ue[i - 1][m] + 6.0 * ue[i][m] -
-                                        4.0 * ue[i + 1][m] + ue[i + 2][m]);
-        });
+        NS::for_each(
+            NESTPARUNSEQ, mrange.begin(), mrange.end(), [&](int m) -> void {
+              int i = 1;
+              forcing[i][j][k][m] =
+                  forcing[i][j][k][m] -
+                  dssp * (5.0 * ue[i][m] - 4.0 * ue[i + 1][m] + ue[i + 2][m]);
+              i = 2;
+              forcing[i][j][k][m] =
+                  forcing[i][j][k][m] -
+                  dssp * (-4.0 * ue[i - 1][m] + 6.0 * ue[i][m] -
+                          4.0 * ue[i + 1][m] + ue[i + 2][m]);
+            });
 
-        NS::for_each(PARALLEL,mrange.begin(), mrange.end(), [&](int m) -> void {
-          auto tmprange = view::ints(3, grid_points[0] - 3 * 1);
-          NS::for_each(PARALLELUNSEQ,tmprange.begin(), tmprange.end(), [&](int i) -> void {
-            forcing[i][j][k][m] =
-                forcing[i][j][k][m] -
-                dssp * (ue[i - 2][m] - 4.0 * ue[i - 1][m] + 6.0 * ue[i][m] -
-                        4.0 * ue[i + 1][m] + ue[i + 2][m]);
-          });
-        });
+        NS::for_each(
+            NESTPARUNSEQ, mrange.begin(), mrange.end(), [&](int m) -> void {
+              NS::for_each(PARALLELUNSEQ, tmprange.begin(), tmprange.end(),
+                           [&](int i) -> void {
+                             forcing[i][j][k][m] =
+                                 forcing[i][j][k][m] -
+                                 dssp * (ue[i - 2][m] - 4.0 * ue[i - 1][m] +
+                                         6.0 * ue[i][m] - 4.0 * ue[i + 1][m] +
+                                         ue[i + 2][m]);
+                           });
+            });
 
-        NS::for_each(PARALLELUNSEQ,mrange.begin(), mrange.end(), [&](int m) -> void {
-          auto i = grid_points[0] - 3;
-          forcing[i][j][k][m] = forcing[i][j][k][m] -
-                                dssp * (ue[i - 2][m] - 4.0 * ue[i - 1][m] +
-                                        6.0 * ue[i][m] - 4.0 * ue[i + 1][m]);
-          i = grid_points[0] - 2;
-          forcing[i][j][k][m] =
-              forcing[i][j][k][m] -
-              dssp * (ue[i - 2][m] - 4.0 * ue[i - 1][m] + 5.0 * ue[i][m]);
-        });
+        NS::for_each(
+            PARALLELUNSEQ, mrange.begin(), mrange.end(), [&](int m) -> void {
+              auto i = grid_points[0] - 3;
+              forcing[i][j][k][m] =
+                  forcing[i][j][k][m] -
+                  dssp * (ue[i - 2][m] - 4.0 * ue[i - 1][m] + 6.0 * ue[i][m] -
+                          4.0 * ue[i + 1][m]);
+              i = grid_points[0] - 2;
+              forcing[i][j][k][m] =
+                  forcing[i][j][k][m] -
+                  dssp * (ue[i - 2][m] - 4.0 * ue[i - 1][m] + 5.0 * ue[i][m]);
+            });
       });
     });
-
-    auto r3 = view::ints(0, grid_points[1]);
-    NS::for_each(PARALLEL,gp0.begin(), gp0.end(), [&](auto i) -> void {
+    NS::for_each(PARALLEL, gp0.begin(), gp0.end(), [&](auto i) -> void {
       double xi = i * dnxm1;
-      NS::for_each(PARALLEL,gp2.begin(), gp2.end(), [&](auto k) -> void {
+      NS::for_each(NESTPAR, gp2.begin(), gp2.end(), [&](auto k) -> void {
         double zeta = k * dnzm1;
-        NS::for_each(PARALLEL,r3.begin(), r3.end(), [&](auto j) -> void {
+        NS::for_each(NESTPAR, r3.begin(), r3.end(), [&](auto j) -> void {
           double eta = j * dnym1;
           double dtemp[5];
           exact_solution(xi, eta, zeta, const_cast<double *>(&dtemp[0]));
-          NS::for_each(PARALLEL,mrange.begin(), mrange.end(),
-                        [&](auto m) -> void { ue[j][m] = dtemp[m]; });
+          NS::for_each(NESTPAR, mrange.begin(), mrange.end(),
+                       [&](auto m) -> void { ue[j][m] = dtemp[m]; });
           double dtpp = 1.0 / dtemp[0];
-          auto m2range = view::ints(1, 5);
-          NS::for_each(PARALLEL,m2range.begin(), m2range.end(),
-                        [&](auto m) -> void { buf[j][m] = dtpp * dtemp[m]; });
+          MAKE_RANGE(1, 5, m2range)
+          NS::for_each(NESTPAR, m2range.begin(), m2range.end(),
+                       [&](auto m) -> void { buf[j][m] = dtpp * dtemp[m]; });
           cuf[j] = buf[j][2] * buf[j][2];
           buf[j][0] = cuf[j] + buf[j][1] * buf[j][1] + buf[j][3] * buf[j][3];
           q[j] = 0.5 * (buf[j][1] * ue[j][1] + buf[j][2] * ue[j][2] +
                         buf[j][3] * ue[j][3]);
         });
-        NS::for_each(PARALLELUNSEQ,gp1.begin(), gp1.end(), [&](auto j) -> void {
+        NS::for_each(NESTPARUNSEQ, gp1.begin(), gp1.end(), [&](auto j) -> void {
           auto jm1 = j - 1;
           auto jp1 = j + 1;
 
@@ -454,166 +422,182 @@ void exact_rhs(void) {
               yycon5 * (buf[jp1][4] - 2.0 * buf[j][4] + buf[jm1][4]) +
               dy5ty1 * (ue[jp1][4] - 2.0 * ue[j][4] + ue[jm1][4]);
         });
-        auto mrange1 = view::ints(0, 5);
-        NS::for_each(PARALLELUNSEQ,mrange1.begin(), mrange1.end(), [&](auto m) -> void {
-          auto j = 1;
-          forcing[i][j][k][m] =
-              forcing[i][j][k][m] -
-              dssp * (5.0 * ue[j][m] - 4.0 * ue[j + 1][m] + ue[j + 2][m]);
-          j = 2;
-          forcing[i][j][k][m] = forcing[i][j][k][m] -
-                                dssp * (-4.0 * ue[j - 1][m] + 6.0 * ue[j][m] -
-                                        4.0 * ue[j + 1][m] + ue[j + 2][m]);
-        });
+        NS::for_each(
+            NESTPARUNSEQ, mrange.begin(), mrange.end(), [&](auto m) -> void {
+              auto j = 1;
+              forcing[i][j][k][m] =
+                  forcing[i][j][k][m] -
+                  dssp * (5.0 * ue[j][m] - 4.0 * ue[j + 1][m] + ue[j + 2][m]);
+              j = 2;
+              forcing[i][j][k][m] =
+                  forcing[i][j][k][m] -
+                  dssp * (-4.0 * ue[j - 1][m] + 6.0 * ue[j][m] -
+                          4.0 * ue[j + 1][m] + ue[j + 2][m]);
+            });
 
-        NS::for_each(PARALLEL,mrange1.begin(), mrange1.end(), [&](auto m) -> void {
-          auto mrange2 = view::ints(3, grid_points[1] - 3 * 1);
-          NS::for_each(PARALLELUNSEQ,mrange2.begin(), mrange2.end(), [&](auto j) -> void {
-            forcing[i][j][k][m] =
-                forcing[i][j][k][m] -
-                dssp * (ue[j - 2][m] - 4.0 * ue[j - 1][m] + 6.0 * ue[j][m] -
-                        4.0 * ue[j + 1][m] + ue[j + 2][m]);
-          });
-        });
-        NS::for_each(PARALLELUNSEQ,mrange1.begin(), mrange1.end(), [&](auto m) -> void {
-          auto j = grid_points[1] - 3;
-          forcing[i][j][k][m] = forcing[i][j][k][m] -
-                                dssp * (ue[j - 2][m] - 4.0 * ue[j - 1][m] +
-                                        6.0 * ue[j][m] - 4.0 * ue[j + 1][m]);
-          j = grid_points[1] - 2;
-          forcing[i][j][k][m] =
-              forcing[i][j][k][m] -
-              dssp * (ue[j - 2][m] - 4.0 * ue[j - 1][m] + 5.0 * ue[j][m]);
-        });
+        NS::for_each(
+            NESTPARUNSEQ, mrange.begin(), mrange.end(), [&](auto m) -> void {
+              NS::for_each(NESTPARUNSEQ, mrange2.begin(), mrange2.end(),
+                           [&](auto j) -> void {
+                             forcing[i][j][k][m] =
+                                 forcing[i][j][k][m] -
+                                 dssp * (ue[j - 2][m] - 4.0 * ue[j - 1][m] +
+                                         6.0 * ue[j][m] - 4.0 * ue[j + 1][m] +
+                                         ue[j + 2][m]);
+                           });
+            });
+        NS::for_each(
+            NESTPARUNSEQ, mrange.begin(), mrange.end(), [&](auto m) -> void {
+              auto j = grid_points[1] - 3;
+              forcing[i][j][k][m] =
+                  forcing[i][j][k][m] -
+                  dssp * (ue[j - 2][m] - 4.0 * ue[j - 1][m] + 6.0 * ue[j][m] -
+                          4.0 * ue[j + 1][m]);
+              j = grid_points[1] - 2;
+              forcing[i][j][k][m] =
+                  forcing[i][j][k][m] -
+                  dssp * (ue[j - 2][m] - 4.0 * ue[j - 1][m] + 5.0 * ue[j][m]);
+            });
       });
     });
     /*--------------------------------------------------------------------
     c     zeta-direction flux differences
     c-------------------------------------------------------------------*/
-    irange = view::ints(1, grid_points[0] - 1);
-    jrange = view::ints(1, grid_points[1] - 1);
-    krange = view::ints(1, grid_points[2]);
-    NS::for_each(PARALLEL,irange.begin(), irange.end(), [&](auto i) -> void {
+    MAKE_RANGE_UNDEF(1, grid_points[0] - 1, irange)
+    MAKE_RANGE_UNDEF(1, grid_points[1] - 1, jrange)
+    MAKE_RANGE_UNDEF(1, grid_points[2], krange)
+    MAKE_RANGE(1, 5, m2)
+    MAKE_RANGE(1, grid_points[2] - 1, k2range);
+    MAKE_RANGE(3, grid_points[2] - 3 * 1, k2);
+    NS::for_each(PARALLEL, irange.begin(), irange.end(), [&](auto i) -> void {
       double xi = (double)i * dnxm1;
-      NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
+      NS::for_each(NESTPAR, jrange.begin(), jrange.end(), [&](auto j) -> void {
         double eta = (double)j * dnym1;
-        NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto k) -> void {
-          double zeta = (double)k * dnzm1;
-          double dtemp[5];
-          exact_solution(xi, eta, zeta, dtemp);
-          NS::for_each(PARALLELUNSEQ,mrange.begin(), mrange.end(), [&](auto m) -> void {
-            ue[k][m] = dtemp[m];
-          });
+        NS::for_each(
+            NESTPAR, krange.begin(), krange.end(), [&](auto k) -> void {
+              double zeta = (double)k * dnzm1;
+              double dtemp[5];
+              exact_solution(xi, eta, zeta, dtemp);
+              NS::for_each(NESTPARUNSEQ, mrange.begin(), mrange.end(),
+                           [&](auto m) -> void { ue[k][m] = dtemp[m]; });
 
-          double dtpp = 1.0 / dtemp[0];
-          auto m2=view::ints(1,5);
-          NS::for_each(PARALLELUNSEQ,m2.begin(), m2.end(), [&](auto m) -> void {
-            buf[k][m] = dtpp * dtemp[m];
-          });
+              double dtpp = 1.0 / dtemp[0];
+              NS::for_each(
+                  NESTPARUNSEQ, m2.begin(), m2.end(),
+                  [&](auto m) -> void { buf[k][m] = dtpp * dtemp[m]; });
 
-          cuf[k] = buf[k][3] * buf[k][3];
-          buf[k][0] = cuf[k] + buf[k][1] * buf[k][1] + buf[k][2] * buf[k][2];
-          q[k] = 0.5 * (buf[k][1] * ue[k][1] + buf[k][2] * ue[k][2] +
-                        buf[k][3] * ue[k][3]);
-        });
+              cuf[k] = buf[k][3] * buf[k][3];
+              buf[k][0] =
+                  cuf[k] + buf[k][1] * buf[k][1] + buf[k][2] * buf[k][2];
+              q[k] = 0.5 * (buf[k][1] * ue[k][1] + buf[k][2] * ue[k][2] +
+                            buf[k][3] * ue[k][3]);
+            });
+        NS::for_each(
+            NESTPARUNSEQ, k2range.begin(), k2range.end(), [&](auto k2) -> void {
+              int km1 = k2 - 1;
+              int kp1 = k2 + 1;
 
-        auto k2range = view::ints(1, grid_points[2]-1);
-        NS::for_each(PARALLELUNSEQ,k2range.begin(), k2range.end(), [&](auto k2) -> void {
-          int km1 = k2 - 1;
-          int kp1 = k2 + 1;
+              forcing[i][j][k2][0] =
+                  forcing[i][j][k2][0] - tz2 * (ue[kp1][3] - ue[km1][3]) +
+                  dz1tz1 * (ue[kp1][0] - 2.0 * ue[k2][0] + ue[km1][0]);
 
-          forcing[i][j][k2][0] =
-              forcing[i][j][k2][0] - tz2 * (ue[kp1][3] - ue[km1][3]) +
-              dz1tz1 * (ue[kp1][0] - 2.0 * ue[k2][0] + ue[km1][0]);
+              forcing[i][j][k2][1] =
+                  forcing[i][j][k2][1] -
+                  tz2 * (ue[kp1][1] * buf[kp1][3] - ue[km1][1] * buf[km1][3]) +
+                  zzcon2 * (buf[kp1][1] - 2.0 * buf[k2][1] + buf[km1][1]) +
+                  dz2tz1 * (ue[kp1][1] - 2.0 * ue[k2][1] + ue[km1][1]);
 
-          forcing[i][j][k2][1] =
-              forcing[i][j][k2][1] -
-              tz2 * (ue[kp1][1] * buf[kp1][3] - ue[km1][1] * buf[km1][3]) +
-              zzcon2 * (buf[kp1][1] - 2.0 * buf[k2][1] + buf[km1][1]) +
-              dz2tz1 * (ue[kp1][1] - 2.0 * ue[k2][1] + ue[km1][1]);
+              forcing[i][j][k2][2] =
+                  forcing[i][j][k2][2] -
+                  tz2 * (ue[kp1][2] * buf[kp1][3] - ue[km1][2] * buf[km1][3]) +
+                  zzcon2 * (buf[kp1][2] - 2.0 * buf[k2][2] + buf[km1][2]) +
+                  dz3tz1 * (ue[kp1][2] - 2.0 * ue[k2][2] + ue[km1][2]);
 
-          forcing[i][j][k2][2] =
-              forcing[i][j][k2][2] -
-              tz2 * (ue[kp1][2] * buf[kp1][3] - ue[km1][2] * buf[km1][3]) +
-              zzcon2 * (buf[kp1][2] - 2.0 * buf[k2][2] + buf[km1][2]) +
-              dz3tz1 * (ue[kp1][2] - 2.0 * ue[k2][2] + ue[km1][2]);
+              forcing[i][j][k2][3] =
+                  forcing[i][j][k2][3] -
+                  tz2 *
+                      ((ue[kp1][3] * buf[kp1][3] + c2 * (ue[kp1][4] - q[kp1])) -
+                       (ue[km1][3] * buf[km1][3] +
+                        c2 * (ue[km1][4] - q[km1]))) +
+                  zzcon1 * (buf[kp1][3] - 2.0 * buf[k2][3] + buf[km1][3]) +
+                  dz4tz1 * (ue[kp1][3] - 2.0 * ue[k2][3] + ue[km1][3]);
 
-          forcing[i][j][k2][3] =
-              forcing[i][j][k2][3] -
-              tz2 * ((ue[kp1][3] * buf[kp1][3] + c2 * (ue[kp1][4] - q[kp1])) -
-                     (ue[km1][3] * buf[km1][3] + c2 * (ue[km1][4] - q[km1]))) +
-              zzcon1 * (buf[kp1][3] - 2.0 * buf[k2][3] + buf[km1][3]) +
-              dz4tz1 * (ue[kp1][3] - 2.0 * ue[k2][3] + ue[km1][3]);
-
-          forcing[i][j][k2][4] =
-              forcing[i][j][k2][4] -
-              tz2 * (buf[kp1][3] * (c1 * ue[kp1][4] - c2 * q[kp1]) -
-                     buf[km1][3] * (c1 * ue[km1][4] - c2 * q[km1])) +
-              0.5 * zzcon3 * (buf[kp1][0] - 2.0 * buf[k2][0] + buf[km1][0]) +
-              zzcon4 * (cuf[kp1] - 2.0 * cuf[k2] + cuf[km1]) +
-              zzcon5 * (buf[kp1][4] - 2.0 * buf[k2][4] + buf[km1][4]) +
-              dz5tz1 * (ue[kp1][4] - 2.0 * ue[k2][4] + ue[km1][4]);
-        });
+              forcing[i][j][k2][4] =
+                  forcing[i][j][k2][4] -
+                  tz2 * (buf[kp1][3] * (c1 * ue[kp1][4] - c2 * q[kp1]) -
+                         buf[km1][3] * (c1 * ue[km1][4] - c2 * q[km1])) +
+                  0.5 * zzcon3 *
+                      (buf[kp1][0] - 2.0 * buf[k2][0] + buf[km1][0]) +
+                  zzcon4 * (cuf[kp1] - 2.0 * cuf[k2] + cuf[km1]) +
+                  zzcon5 * (buf[kp1][4] - 2.0 * buf[k2][4] + buf[km1][4]) +
+                  dz5tz1 * (ue[kp1][4] - 2.0 * ue[k2][4] + ue[km1][4]);
+            });
 
         /*--------------------------------------------------------------------
         c     Fourth-order dissipation
         c-------------------------------------------------------------------*/
-        NS::for_each(PARALLELUNSEQ,mrange.begin(), mrange.end(), [&](auto m) -> void {
-          int k = 1;
-          forcing[i][j][k][m] =
-              forcing[i][j][k][m] -
-              dssp * (5.0 * ue[k][m] - 4.0 * ue[k + 1][m] + ue[k + 2][m]);
-          k = 2;
-          forcing[i][j][k][m] = forcing[i][j][k][m] -
-                                dssp * (-4.0 * ue[k - 1][m] + 6.0 * ue[k][m] -
-                                        4.0 * ue[k + 1][m] + ue[k + 2][m]);
-        });
-        auto k2=view::ints(3,grid_points[2] - 3 * 1);
-        NS::for_each(PARALLEL,mrange.begin(), mrange.end(), [&](auto m) -> void {
-          NS::for_each(PARALLELUNSEQ,k2.begin(), k2.end(), [&](auto k) -> void {
-            forcing[i][j][k][m] =
-                forcing[i][j][k][m] -
-                dssp * (ue[k - 2][m] - 4.0 * ue[k - 1][m] + 6.0 * ue[k][m] -
-                        4.0 * ue[k + 1][m] + ue[k + 2][m]);
-          });
-        });
+        NS::for_each(
+            NESTPARUNSEQ, mrange.begin(), mrange.end(), [&](auto m) -> void {
+              int k = 1;
+              forcing[i][j][k][m] =
+                  forcing[i][j][k][m] -
+                  dssp * (5.0 * ue[k][m] - 4.0 * ue[k + 1][m] + ue[k + 2][m]);
+              k = 2;
+              forcing[i][j][k][m] =
+                  forcing[i][j][k][m] -
+                  dssp * (-4.0 * ue[k - 1][m] + 6.0 * ue[k][m] -
+                          4.0 * ue[k + 1][m] + ue[k + 2][m]);
+            });
+        NS::for_each(
+            NESTPARUNSEQ, mrange.begin(), mrange.end(), [&](auto m) -> void {
+              NS::for_each(PARALLELUNSEQ, k2.begin(), k2.end(),
+                           [&](auto k) -> void {
+                             forcing[i][j][k][m] =
+                                 forcing[i][j][k][m] -
+                                 dssp * (ue[k - 2][m] - 4.0 * ue[k - 1][m] +
+                                         6.0 * ue[k][m] - 4.0 * ue[k + 1][m] +
+                                         ue[k + 2][m]);
+                           });
+            });
 
-        NS::for_each(PARALLELUNSEQ,mrange.begin(), mrange.end(), [&](auto m) -> void {
-          int k = grid_points[2] - 3;
-          forcing[i][j][k][m] = forcing[i][j][k][m] -
-                                dssp * (ue[k - 2][m] - 4.0 * ue[k - 1][m] +
-                                        6.0 * ue[k][m] - 4.0 * ue[k + 1][m]);
-          k = grid_points[2] - 2;
-          forcing[i][j][k][m] =
-              forcing[i][j][k][m] -
-              dssp * (ue[k - 2][m] - 4.0 * ue[k - 1][m] + 5.0 * ue[k][m]);
-        });
+        NS::for_each(
+            NESTPARUNSEQ, mrange.begin(), mrange.end(), [&](auto m) -> void {
+              int k = grid_points[2] - 3;
+              forcing[i][j][k][m] =
+                  forcing[i][j][k][m] -
+                  dssp * (ue[k - 2][m] - 4.0 * ue[k - 1][m] + 6.0 * ue[k][m] -
+                          4.0 * ue[k + 1][m]);
+              k = grid_points[2] - 2;
+              forcing[i][j][k][m] =
+                  forcing[i][j][k][m] -
+                  dssp * (ue[k - 2][m] - 4.0 * ue[k - 1][m] + 5.0 * ue[k][m]);
+            });
       });
     });
 
     /*--------------------------------------------------------------------
     c     now change the sign of the forcing function,
     c-------------------------------------------------------------------*/
-    irange=view::ints(1,grid_points[0]-1);
-    jrange=view::ints(1,grid_points[1]-1);
-    krange=view::ints(1,grid_points[2]-1);
-    mrange=view::ints(0,5);
-    NS::for_each(PARALLEL,irange.begin(), irange.end(), [&](auto i) -> void {
-      NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-        NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto k) -> void {
-            NS::for_each(PARALLELUNSEQ,mrange.begin(), mrange.end(), [&](auto m) -> void {
-          forcing[i][j][k][m] = -1.0 * forcing[i][j][k][m];
-        });
-    });
-    });
+    MAKE_RANGE_UNDEF(1, grid_points[0] - 1, irange);
+    MAKE_RANGE_UNDEF(1, grid_points[1] - 1, jrange);
+    MAKE_RANGE_UNDEF(1, grid_points[2] - 1, krange);
+    NS::for_each(PARALLEL, irange.begin(), irange.end(), [&](auto i) -> void {
+      NS::for_each(NESTPAR, jrange.begin(), jrange.end(), [&](auto j) -> void {
+        NS::for_each(
+            NESTPAR, krange.begin(), krange.end(), [&](auto k) -> void {
+              NS::for_each(NESTPARUNSEQ, mrange.begin(), mrange.end(),
+                           [&](auto m) -> void {
+                             forcing[i][j][k][m] = -1.0 * forcing[i][j][k][m];
+                           });
+            });
+      });
     });
   }
 }
 /*--------------------------------------------------------------------
 --------------------------------------------------------------------*/
 
-void exact_solution(double xi, double eta, double zeta,
-                           double dtemp[5]) {
+void exact_solution(double xi, double eta, double zeta, double dtemp[5]) {
 
   /*--------------------------------------------------------------------
   --------------------------------------------------------------------*/
@@ -622,255 +606,252 @@ void exact_solution(double xi, double eta, double zeta,
   c     this function returns the exact solution at point xi, eta, zeta
   c-------------------------------------------------------------------*/
 
-  auto mrange=view::ints(0,5);
+  MAKE_RANGE(0, 5, mrange);
 
-  NS::for_each(PARALLELUNSEQ,mrange.begin(), mrange.end(), [&](auto m) -> void {
-    dtemp[m] =
-        ce[m][0] +
-        xi * (ce[m][1] + xi * (ce[m][4] + xi * (ce[m][7] + xi * ce[m][10]))) +
-        eta *
-            (ce[m][2] + eta * (ce[m][5] + eta * (ce[m][8] + eta * ce[m][11]))) +
-        zeta * (ce[m][3] +
-                zeta * (ce[m][6] + zeta * (ce[m][9] + zeta * ce[m][12])));
-  });
+  NS::for_each(
+      PARALLELUNSEQ, mrange.begin(), mrange.end(), [&](auto m) -> void {
+        dtemp[m] =
+            ce[m][0] +
+            xi * (ce[m][1] +
+                  xi * (ce[m][4] + xi * (ce[m][7] + xi * ce[m][10]))) +
+            eta * (ce[m][2] +
+                   eta * (ce[m][5] + eta * (ce[m][8] + eta * ce[m][11]))) +
+            zeta * (ce[m][3] +
+                    zeta * (ce[m][6] + zeta * (ce[m][9] + zeta * ce[m][12])));
+      });
 }
 
 /*--------------------------------------------------------------------
 --------------------------------------------------------------------*/
 
 void initialize(void) {
-    /*--------------------------------------------------------------------
-    --------------------------------------------------------------------*/
+  /*--------------------------------------------------------------------
+  --------------------------------------------------------------------*/
 
-    /*--------------------------------------------------------------------
-    c     This subroutine initializes the field variable u using
-    c     tri-linear transfinite interpolation of the boundary values
-    c-------------------------------------------------------------------*/
+  /*--------------------------------------------------------------------
+  c     This subroutine initializes the field variable u using
+  c     tri-linear transfinite interpolation of the boundary values
+  c-------------------------------------------------------------------*/
 
-    //int i, j, k, m, ix, iy, iz;
-    //double xi, eta, zeta, Pface[2][3][5], Pxi, Peta, Pzeta, temp[5];
-    double Pface[2][3][5];
-    auto irange = view::ints(0, IMAX);
-    auto jrange = view::ints(0, IMAX);
-    auto krange = view::ints(0, IMAX);
-    auto mrange = view::ints(0, 5);
+  // int i, j, k, m, ix, iy, iz;
+  // double xi, eta, zeta, Pface[2][3][5], Pxi, Peta, Pzeta, temp[5];
+  double Pface[2][3][5];
+  MAKE_RANGE(0, IMAX, irange);
+  MAKE_RANGE(0, IMAX, jrange);
+  MAKE_RANGE(0, IMAX, krange);
+  MAKE_RANGE(0, 5, mrange);
 
-    /*--------------------------------------------------------------------
-    c  Later (in compute_rhs) we compute 1/u for every element. A few of
-    c  the corner elements are not used, but it convenient (and faster)
-    c  to compute the whole thing with a simple loop. Make sure those
-    c  values are nonzero by initializing the whole thing here.
-    c-------------------------------------------------------------------*/
-    NS::for_each(PARALLEL,irange.begin(), irange.end(), [&](auto i) -> void {
-      NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-        NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto k) -> void {
-            NS::for_each(PARALLELUNSEQ,mrange.begin(), mrange.end(), [&](auto m) -> void {
-	  u[i][j][k][m] = 1.0;
+  /*--------------------------------------------------------------------
+  c  Later (in compute_rhs) we compute 1/u for every element. A few of
+  c  the corner elements are not used, but it convenient (and faster)
+  c  to compute the whole thing with a simple loop. Make sure those
+  c  values are nonzero by initializing the whole thing here.
+  c-------------------------------------------------------------------*/
+  NS::for_each(PARALLEL, irange.begin(), irange.end(), [&](auto i) -> void {
+    NS::for_each(NESTPAR, jrange.begin(), jrange.end(), [&](auto j) -> void {
+      NS::for_each(NESTPAR, krange.begin(), krange.end(), [&](auto k) -> void {
+        NS::for_each(NESTPARUNSEQ, mrange.begin(), mrange.end(),
+                     [&](auto m) -> void { u[i][j][k][m] = 1.0; });
+      });
+    });
   });
-});
-});
-});
 
-    /*--------------------------------------------------------------------
-    c     first store the "interpolated" values everywhere on the grid
-    c-------------------------------------------------------------------*/
-    irange = view::ints(0, grid_points[0]);
-    jrange = view::ints(0, grid_points[1]);
-    krange = view::ints(0, grid_points[2]);
-    mrange = view::ints(0, 5);
-    NS::for_each(PARALLEL,irange.begin(), irange.end(), [&](auto i) -> void {
-      double xi = (double)i * dnxm1;
-      NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-        double eta = (double)j * dnym1;
-        NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto k) -> void {
-          double zeta = (double)k * dnzm1;
-
-          for (int ix = 0; ix < 2; ix++) {
-            exact_solution((double)ix, eta, zeta, &(Pface[ix][0][0]));
-          }
-
-          for (int iy = 0; iy < 2; iy++) {
-            exact_solution(xi, (double)iy, zeta, &Pface[iy][1][0]);
-          }
-
-          for (int iz = 0; iz < 2; iz++) {
-            exact_solution(xi, eta, (double)iz, &Pface[iz][2][0]);
-          }
-
-          NS::for_each(PARALLELUNSEQ,mrange.begin(), mrange.end(), [&](auto m) -> void {
-            double Pxi = xi * Pface[1][0][m] + (1.0 - xi) * Pface[0][0][m];
-            double Peta = eta * Pface[1][1][m] + (1.0 - eta) * Pface[0][1][m];
-            double Pzeta = zeta * Pface[1][2][m] + (1.0 - zeta) * Pface[0][2][m];
-
-            u[i][j][k][m] = Pxi + Peta + Pzeta - Pxi * Peta - Pxi * Pzeta -
-                            Peta * Pzeta + Pxi * Peta * Pzeta;
-          });
-        });
-      });
-    });
-
-    /*--------------------------------------------------------------------
-    c     now store the exact values on the boundaries
-    c-------------------------------------------------------------------*/
-
-    /*--------------------------------------------------------------------
-    c     west face
-    c-------------------------------------------------------------------*/
-    int i = 0;
-    int xi = 0.0;
-    jrange = view::ints(0, grid_points[1]);
-    krange = view::ints(0,grid_points[2]);
-    NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
+  /*--------------------------------------------------------------------
+  c     first store the "interpolated" values everywhere on the grid
+  c-------------------------------------------------------------------*/
+  MAKE_RANGE_UNDEF(0, grid_points[0], irange)
+  MAKE_RANGE_UNDEF(0, grid_points[1], jrange)
+  MAKE_RANGE_UNDEF(0, grid_points[2], krange)
+  MAKE_RANGE_UNDEF(0, 5, mrange);
+  NS::for_each(PARALLEL, irange.begin(), irange.end(), [&](auto i) -> void {
+    double xi = (double)i * dnxm1;
+    NS::for_each(NESTPAR, jrange.begin(), jrange.end(), [&](auto j) -> void {
       double eta = (double)j * dnym1;
-      NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto k) -> void {
+      NS::for_each(NESTPAR, krange.begin(), krange.end(), [&](auto k) -> void {
         double zeta = (double)k * dnzm1;
-        double temp[5];
-        exact_solution(xi, eta, zeta, temp);
-        NS::for_each(PARALLELUNSEQ,mrange.begin(), mrange.end(), [&](auto m) -> void {
-          u[i][j][k][m] = temp[m];
-        });
+
+        for (int ix = 0; ix < 2; ix++) {
+          exact_solution((double)ix, eta, zeta, &(Pface[ix][0][0]));
+        }
+
+        for (int iy = 0; iy < 2; iy++) {
+          exact_solution(xi, (double)iy, zeta, &Pface[iy][1][0]);
+        }
+
+        for (int iz = 0; iz < 2; iz++) {
+          exact_solution(xi, eta, (double)iz, &Pface[iz][2][0]);
+        }
+
+        NS::for_each(
+            NESTPARUNSEQ, mrange.begin(), mrange.end(), [&](auto m) -> void {
+              double Pxi = xi * Pface[1][0][m] + (1.0 - xi) * Pface[0][0][m];
+              double Peta = eta * Pface[1][1][m] + (1.0 - eta) * Pface[0][1][m];
+              double Pzeta =
+                  zeta * Pface[1][2][m] + (1.0 - zeta) * Pface[0][2][m];
+
+              u[i][j][k][m] = Pxi + Peta + Pzeta - Pxi * Peta - Pxi * Pzeta -
+                              Peta * Pzeta + Pxi * Peta * Pzeta;
+            });
       });
     });
+  });
 
-    /*--------------------------------------------------------------------
-    c     east face
-    c-------------------------------------------------------------------*/
+  /*--------------------------------------------------------------------
+  c     now store the exact values on the boundaries
+  c-------------------------------------------------------------------*/
 
-    i = grid_points[0] - 1;
-    xi = 1.0;
-    jrange = view::ints(0, grid_points[1]);
-    krange = view::ints(0, grid_points[2]);
-    NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-      double eta = (double)j * dnym1;
-      NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto k) -> void {
-        double zeta = (double)k * dnzm1;
-        double temp[5];
-        exact_solution(xi, eta, zeta, temp);
-        NS::for_each(PARALLELUNSEQ,mrange.begin(), mrange.end(), [&](auto m) -> void {
-          u[i][j][k][m] = temp[m];
-        });
-      });
+  /*--------------------------------------------------------------------
+  c     west face
+  c-------------------------------------------------------------------*/
+  int i = 0;
+  int xi = 0.0;
+  MAKE_RANGE_UNDEF(0, grid_points[1], jrange);
+  MAKE_RANGE_UNDEF(0, grid_points[2], krange);
+  NS::for_each(PARALLEL, jrange.begin(), jrange.end(), [&](auto j) -> void {
+    double eta = (double)j * dnym1;
+    NS::for_each(NESTPAR, krange.begin(), krange.end(), [&](auto k) -> void {
+      double zeta = (double)k * dnzm1;
+      double temp[5];
+      exact_solution(xi, eta, zeta, temp);
+      NS::for_each(NESTPARUNSEQ, mrange.begin(), mrange.end(),
+                   [&](auto m) -> void { u[i][j][k][m] = temp[m]; });
     });
+  });
 
-    /*--------------------------------------------------------------------
-    c     south face
-    c-------------------------------------------------------------------*/
-    int j = 0;
-    int eta = 0.0;
-    irange=view::ints(0,grid_points[0]);
-    krange=view::ints(0,grid_points[2]);
-    NS::for_each(PARALLEL,irange.begin(), irange.end(), [&](auto i) -> void {
-      double xi = (double)i * dnxm1;
-      NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto k) -> void {
-        double zeta = (double)k * dnzm1;
-        double temp[5];
-        exact_solution(xi, eta, zeta, temp);
-        NS::for_each(PARALLELUNSEQ,mrange.begin(), mrange.end(), [&](auto m) -> void {
-          u[i][j][k][m] = temp[m];
-        });
-      });
-    });
+  /*--------------------------------------------------------------------
+  c     east face
+  c-------------------------------------------------------------------*/
 
-    /*--------------------------------------------------------------------
-    c     north face
-    c-------------------------------------------------------------------*/
-    j = grid_points[1] - 1;
-    eta = 1.0;
-    NS::for_each(PARALLEL,irange.begin(), irange.end(), [&](auto i) -> void {
-      double xi = (double)i * dnxm1;
-      NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto k) -> void {
-        double zeta = (double)k * dnzm1;
-        double temp[5];
-        exact_solution(xi, eta, zeta, temp);
-        NS::for_each(PARALLELUNSEQ,mrange.begin(), mrange.end(), [&](auto m) -> void {
-          u[i][j][k][m] = temp[m];
-        });
-      });
+  i = grid_points[0] - 1;
+  xi = 1.0;
+  MAKE_RANGE_UNDEF(0, grid_points[1], jrange);
+  MAKE_RANGE_UNDEF(0, grid_points[2], krange);
+  NS::for_each(PARALLEL, jrange.begin(), jrange.end(), [&](auto j) -> void {
+    double eta = (double)j * dnym1;
+    NS::for_each(NESTPAR, krange.begin(), krange.end(), [&](auto k) -> void {
+      double zeta = (double)k * dnzm1;
+      double temp[5];
+      exact_solution(xi, eta, zeta, temp);
+      NS::for_each(NESTPARUNSEQ, mrange.begin(), mrange.end(),
+                   [&](auto m) -> void { u[i][j][k][m] = temp[m]; });
     });
+  });
 
-    /*--------------------------------------------------------------------
-    c     bottom face
-    c-------------------------------------------------------------------*/
-    int k = 0;
-    int zeta = 0.0;
-    irange=view::ints(0,grid_points[0]);
-    jrange=view::ints(0,grid_points[1]);
-    NS::for_each(PARALLEL,irange.begin(), irange.end(), [&](auto i) -> void {
-      xi = (double)i * dnxm1;
-      NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-        eta = (double)j * dnym1;
-        double temp[5];
-        exact_solution(xi, eta, zeta, temp);
-        NS::for_each(PARALLELUNSEQ,mrange.begin(), mrange.end(), [&](auto m) -> void {
-          u[i][j][k][m] = temp[m];
-        });
-      });
+  /*--------------------------------------------------------------------
+  c     south face
+  c-------------------------------------------------------------------*/
+  int j = 0;
+  int eta = 0.0;
+  MAKE_RANGE_UNDEF(0, grid_points[0], irange);
+  MAKE_RANGE_UNDEF(0, grid_points[2], krange);
+  NS::for_each(PARALLEL, irange.begin(), irange.end(), [&](auto i) -> void {
+    double xi = (double)i * dnxm1;
+    NS::for_each(NESTPAR, krange.begin(), krange.end(), [&](auto k) -> void {
+      double zeta = (double)k * dnzm1;
+      double temp[5];
+      exact_solution(xi, eta, zeta, temp);
+      NS::for_each(NESTPARUNSEQ, mrange.begin(), mrange.end(),
+                   [&](auto m) -> void { u[i][j][k][m] = temp[m]; });
     });
+  });
 
-    /*--------------------------------------------------------------------
-    c     top face
-    c-------------------------------------------------------------------*/
-    k = grid_points[2] - 1;
-    zeta = 1.0;
-    NS::for_each(PARALLEL,irange.begin(), irange.end(), [&](auto i) -> void {
-      xi = (double)i * dnxm1;
-      NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-        eta = (double)j * dnym1;
-        double temp[5];
-        exact_solution(xi, eta, zeta, temp);
-        NS::for_each(PARALLELUNSEQ,mrange.begin(), mrange.end(), [&](auto m) -> void {
-          u[i][j][k][m] = temp[m];
-        });
-      });
+  /*--------------------------------------------------------------------
+  c     north face
+  c-------------------------------------------------------------------*/
+  j = grid_points[1] - 1;
+  eta = 1.0;
+  NS::for_each(PARALLEL, irange.begin(), irange.end(), [&](auto i) -> void {
+    double xi = (double)i * dnxm1;
+    NS::for_each(NESTPAR, krange.begin(), krange.end(), [&](auto k) -> void {
+      double zeta = (double)k * dnzm1;
+      double temp[5];
+      exact_solution(xi, eta, zeta, temp);
+      NS::for_each(NESTPARUNSEQ, mrange.begin(), mrange.end(),
+                   [&](auto m) -> void { u[i][j][k][m] = temp[m]; });
     });
+  });
+
+  /*--------------------------------------------------------------------
+  c     bottom face
+  c-------------------------------------------------------------------*/
+  int k = 0;
+  int zeta = 0.0;
+  MAKE_RANGE_UNDEF(0, grid_points[0], irange);
+  MAKE_RANGE_UNDEF(0, grid_points[1], jrange);
+  NS::for_each(PARALLEL, irange.begin(), irange.end(), [&](auto i) -> void {
+    xi = (double)i * dnxm1;
+    NS::for_each(NESTPAR, jrange.begin(), jrange.end(), [&](auto j) -> void {
+      eta = (double)j * dnym1;
+      double temp[5];
+      exact_solution(xi, eta, zeta, temp);
+      NS::for_each(NESTPARUNSEQ, mrange.begin(), mrange.end(),
+                   [&](auto m) -> void { u[i][j][k][m] = temp[m]; });
+    });
+  });
+
+  /*--------------------------------------------------------------------
+  c     top face
+  c-------------------------------------------------------------------*/
+  k = grid_points[2] - 1;
+  zeta = 1.0;
+  NS::for_each(PARALLEL, irange.begin(), irange.end(), [&](auto i) -> void {
+    xi = (double)i * dnxm1;
+    NS::for_each(NESTPAR, jrange.begin(), jrange.end(), [&](auto j) -> void {
+      eta = (double)j * dnym1;
+      double temp[5];
+      exact_solution(xi, eta, zeta, temp);
+      NS::for_each(NESTPARUNSEQ, mrange.begin(), mrange.end(),
+                   [&](auto m) -> void { u[i][j][k][m] = temp[m]; });
+    });
+  });
 }
 /*--------------------------------------------------------------------
 --------------------------------------------------------------------*/
 
 void lhsinit(void) {
-    /*--------------------------------------------------------------------
-    --------------------------------------------------------------------*/
+  /*--------------------------------------------------------------------
+  --------------------------------------------------------------------*/
 
-    /*--------------------------------------------------------------------
-    c     zero the whole left hand side for starters
-    c-------------------------------------------------------------------*/
-    auto irange = view::ints(0, grid_points[0]);
-    auto jrange = view::ints(0, grid_points[1]);
-    auto krange = view::ints(0, grid_points[2]);
-    auto mrange = view::ints(0, 5);
-    auto nrange = view::ints(0, 5);
-    NS::for_each(PARALLEL,irange.begin(), irange.end(), [&](auto i) -> void {
-      NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-        NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto k) -> void {
-          NS::for_each(PARALLEL,mrange.begin(), mrange.end(), [&](auto m) -> void {
-            NS::for_each(PARALLELUNSEQ,nrange.begin(), nrange.end(), [&](auto n) -> void {
-              lhs[i][j][k][0][m][n] = 0.0;
-              lhs[i][j][k][1][m][n] = 0.0;
-              lhs[i][j][k][2][m][n] = 0.0;
-            });
-          });
-        });
+  /*--------------------------------------------------------------------
+  c     zero the whole left hand side for starters
+  c-------------------------------------------------------------------*/
+  MAKE_RANGE(0, grid_points[0], irange);
+  MAKE_RANGE(0, grid_points[1], jrange);
+  MAKE_RANGE(0, grid_points[2], krange);
+  MAKE_RANGE(0, 5, mrange);
+  MAKE_RANGE(0, 5, nrange);
+  NS::for_each(PARALLEL, irange.begin(), irange.end(), [&](auto i) -> void {
+    NS::for_each(NESTPAR, jrange.begin(), jrange.end(), [&](auto j) -> void {
+      NS::for_each(NESTPAR, krange.begin(), krange.end(), [&](auto k) -> void {
+        NS::for_each(NESTPAR, mrange.begin(), mrange.end(),
+                     [&](auto m) -> void {
+                       NS::for_each(NESTPARUNSEQ, nrange.begin(), nrange.end(),
+                                    [&](auto n) -> void {
+                                      lhs[i][j][k][0][m][n] = 0.0;
+                                      lhs[i][j][k][1][m][n] = 0.0;
+                                      lhs[i][j][k][2][m][n] = 0.0;
+                                    });
+                     });
       });
     });
+  });
 
-    /*--------------------------------------------------------------------
-    c     next, set all diagonal values to 1. This is overkill, but convenient
-    c-------------------------------------------------------------------*/
-    irange = view::ints(0, grid_points[0]);
-    jrange = view::ints(0, grid_points[1]);
-    krange = view::ints(0, grid_points[2]);
-    mrange = view::ints(0, 5);
-    NS::for_each(PARALLEL,irange.begin(), irange.end(), [&](auto i) -> void {
-      NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-        NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto k) -> void {
-          NS::for_each(PARALLEL,mrange.begin(), mrange.end(), [&](auto m) -> void {
-            NS::for_each(PARALLELUNSEQ,nrange.begin(), nrange.end(), [&](auto n) -> void {
-              lhs[i][j][k][1][m][m] = 1.0;
-            });
-          });
-        });
+  /*--------------------------------------------------------------------
+  c     next, set all diagonal values to 1. This is overkill, but convenient
+  c-------------------------------------------------------------------*/
+  NS::for_each(PARALLEL, irange.begin(), irange.end(), [&](auto i) -> void {
+    NS::for_each(NESTPAR, jrange.begin(), jrange.end(), [&](auto j) -> void {
+      NS::for_each(NESTPAR, krange.begin(), krange.end(), [&](auto k) -> void {
+        NS::for_each(NESTPAR, mrange.begin(), mrange.end(),
+                     [&](auto m) -> void {
+                       NS::for_each(NESTPARUNSEQ, nrange.begin(), nrange.end(),
+                                    [&](auto n) -> void {
+                                      lhs[i][j][k][1][m][m] = 1.0;
+                                    });
+                     });
       });
     });
+  });
 }
 /*--------------------------------------------------------------------
 --------------------------------------------------------------------*/
@@ -883,256 +864,267 @@ void lhsx(void) {
   /*--------------------------------------------------------------------
   c     This function computes the left hand side in the xi-direction
   c-------------------------------------------------------------------*/
-/*--------------------------------------------------------------------
-c     determine a (labeled f) and n jacobians
-c-------------------------------------------------------------------*/
-auto irange = view::ints(0, grid_points[0]);
-auto jrange = view::ints(0, grid_points[1]);
-auto krange = view::ints(0, grid_points[2]);
- NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-   NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto k) -> void {
-     NS::for_each(PARALLELUNSEQ,irange.begin(), irange.end(), [&](auto i) -> void {
-        double tmp1 = 1.0 / u[i][j][k][0];
-        double tmp2 = tmp1 * tmp1;
-        double tmp3 = tmp1 * tmp2;
-        /*--------------------------------------------------------------------
-        c
-        c-------------------------------------------------------------------*/
-        fjac[i][j][k][0][0] = 0.0;
-        fjac[i][j][k][0][1] = 1.0;
-        fjac[i][j][k][0][2] = 0.0;
-        fjac[i][j][k][0][3] = 0.0;
-        fjac[i][j][k][0][4] = 0.0;
+  /*--------------------------------------------------------------------
+  c     determine a (labeled f) and n jacobians
+  c-------------------------------------------------------------------*/
+  MAKE_RANGE(0, grid_points[0], irange);
+  MAKE_RANGE(0, grid_points[1], jrange);
+  MAKE_RANGE(0, grid_points[2], krange);
+  MAKE_RANGE(1, grid_points[0] - 1, i2range);
+  NS::for_each(PARALLEL, jrange.begin(), jrange.end(), [&](auto j) -> void {
+    NS::for_each(NESTPAR, krange.begin(), krange.end(), [&](auto k) -> void {
+      NS::for_each(
+          NESTPARUNSEQ, irange.begin(), irange.end(), [&](auto i) -> void {
+            double tmp1 = 1.0 / u[i][j][k][0];
+            double tmp2 = tmp1 * tmp1;
+            double tmp3 = tmp1 * tmp2;
+            /*--------------------------------------------------------------------
+            c
+            c-------------------------------------------------------------------*/
+            fjac[i][j][k][0][0] = 0.0;
+            fjac[i][j][k][0][1] = 1.0;
+            fjac[i][j][k][0][2] = 0.0;
+            fjac[i][j][k][0][3] = 0.0;
+            fjac[i][j][k][0][4] = 0.0;
 
-        fjac[i][j][k][1][0] =
-            -(u[i][j][k][1] * tmp2 * u[i][j][k][1]) +
-            c2 * 0.50 *
-                (u[i][j][k][1] * u[i][j][k][1] + u[i][j][k][2] * u[i][j][k][2] +
-                 u[i][j][k][3] * u[i][j][k][3]) *
-                tmp2;
-        fjac[i][j][k][1][1] = (2.0 - c2) * (u[i][j][k][1] / u[i][j][k][0]);
-        fjac[i][j][k][1][2] = -c2 * (u[i][j][k][2] * tmp1);
-        fjac[i][j][k][1][3] = -c2 * (u[i][j][k][3] * tmp1);
-        fjac[i][j][k][1][4] = c2;
+            fjac[i][j][k][1][0] = -(u[i][j][k][1] * tmp2 * u[i][j][k][1]) +
+                                  c2 * 0.50 *
+                                      (u[i][j][k][1] * u[i][j][k][1] +
+                                       u[i][j][k][2] * u[i][j][k][2] +
+                                       u[i][j][k][3] * u[i][j][k][3]) *
+                                      tmp2;
+            fjac[i][j][k][1][1] = (2.0 - c2) * (u[i][j][k][1] / u[i][j][k][0]);
+            fjac[i][j][k][1][2] = -c2 * (u[i][j][k][2] * tmp1);
+            fjac[i][j][k][1][3] = -c2 * (u[i][j][k][3] * tmp1);
+            fjac[i][j][k][1][4] = c2;
 
-        fjac[i][j][k][2][0] = -(u[i][j][k][1] * u[i][j][k][2]) * tmp2;
-        fjac[i][j][k][2][1] = u[i][j][k][2] * tmp1;
-        fjac[i][j][k][2][2] = u[i][j][k][1] * tmp1;
-        fjac[i][j][k][2][3] = 0.0;
-        fjac[i][j][k][2][4] = 0.0;
+            fjac[i][j][k][2][0] = -(u[i][j][k][1] * u[i][j][k][2]) * tmp2;
+            fjac[i][j][k][2][1] = u[i][j][k][2] * tmp1;
+            fjac[i][j][k][2][2] = u[i][j][k][1] * tmp1;
+            fjac[i][j][k][2][3] = 0.0;
+            fjac[i][j][k][2][4] = 0.0;
 
-        fjac[i][j][k][3][0] = -(u[i][j][k][1] * u[i][j][k][3]) * tmp2;
-        fjac[i][j][k][3][1] = u[i][j][k][3] * tmp1;
-        fjac[i][j][k][3][2] = 0.0;
-        fjac[i][j][k][3][3] = u[i][j][k][1] * tmp1;
-        fjac[i][j][k][3][4] = 0.0;
+            fjac[i][j][k][3][0] = -(u[i][j][k][1] * u[i][j][k][3]) * tmp2;
+            fjac[i][j][k][3][1] = u[i][j][k][3] * tmp1;
+            fjac[i][j][k][3][2] = 0.0;
+            fjac[i][j][k][3][3] = u[i][j][k][1] * tmp1;
+            fjac[i][j][k][3][4] = 0.0;
 
-        fjac[i][j][k][4][0] = (c2 *
-                                   (u[i][j][k][1] * u[i][j][k][1] +
-                                    u[i][j][k][2] * u[i][j][k][2] +
-                                    u[i][j][k][3] * u[i][j][k][3]) *
-                                   tmp2 -
-                               c1 * (u[i][j][k][4] * tmp1)) *
-                              (u[i][j][k][1] * tmp1);
-        fjac[i][j][k][4][1] = c1 * u[i][j][k][4] * tmp1 -
-                              0.50 * c2 *
-                                  (3.0 * u[i][j][k][1] * u[i][j][k][1] +
-                                   u[i][j][k][2] * u[i][j][k][2] +
-                                   u[i][j][k][3] * u[i][j][k][3]) *
-                                  tmp2;
-        fjac[i][j][k][4][2] = -c2 * (u[i][j][k][2] * u[i][j][k][1]) * tmp2;
-        fjac[i][j][k][4][3] = -c2 * (u[i][j][k][3] * u[i][j][k][1]) * tmp2;
-        fjac[i][j][k][4][4] = c1 * (u[i][j][k][1] * tmp1);
+            fjac[i][j][k][4][0] = (c2 *
+                                       (u[i][j][k][1] * u[i][j][k][1] +
+                                        u[i][j][k][2] * u[i][j][k][2] +
+                                        u[i][j][k][3] * u[i][j][k][3]) *
+                                       tmp2 -
+                                   c1 * (u[i][j][k][4] * tmp1)) *
+                                  (u[i][j][k][1] * tmp1);
+            fjac[i][j][k][4][1] = c1 * u[i][j][k][4] * tmp1 -
+                                  0.50 * c2 *
+                                      (3.0 * u[i][j][k][1] * u[i][j][k][1] +
+                                       u[i][j][k][2] * u[i][j][k][2] +
+                                       u[i][j][k][3] * u[i][j][k][3]) *
+                                      tmp2;
+            fjac[i][j][k][4][2] = -c2 * (u[i][j][k][2] * u[i][j][k][1]) * tmp2;
+            fjac[i][j][k][4][3] = -c2 * (u[i][j][k][3] * u[i][j][k][1]) * tmp2;
+            fjac[i][j][k][4][4] = c1 * (u[i][j][k][1] * tmp1);
 
-        njac[i][j][k][0][0] = 0.0;
-        njac[i][j][k][0][1] = 0.0;
-        njac[i][j][k][0][2] = 0.0;
-        njac[i][j][k][0][3] = 0.0;
-        njac[i][j][k][0][4] = 0.0;
+            njac[i][j][k][0][0] = 0.0;
+            njac[i][j][k][0][1] = 0.0;
+            njac[i][j][k][0][2] = 0.0;
+            njac[i][j][k][0][3] = 0.0;
+            njac[i][j][k][0][4] = 0.0;
 
-        njac[i][j][k][1][0] = -con43 * c3c4 * tmp2 * u[i][j][k][1];
-        njac[i][j][k][1][1] = con43 * c3c4 * tmp1;
-        njac[i][j][k][1][2] = 0.0;
-        njac[i][j][k][1][3] = 0.0;
-        njac[i][j][k][1][4] = 0.0;
+            njac[i][j][k][1][0] = -con43 * c3c4 * tmp2 * u[i][j][k][1];
+            njac[i][j][k][1][1] = con43 * c3c4 * tmp1;
+            njac[i][j][k][1][2] = 0.0;
+            njac[i][j][k][1][3] = 0.0;
+            njac[i][j][k][1][4] = 0.0;
 
-        njac[i][j][k][2][0] = -c3c4 * tmp2 * u[i][j][k][2];
-        njac[i][j][k][2][1] = 0.0;
-        njac[i][j][k][2][2] = c3c4 * tmp1;
-        njac[i][j][k][2][3] = 0.0;
-        njac[i][j][k][2][4] = 0.0;
+            njac[i][j][k][2][0] = -c3c4 * tmp2 * u[i][j][k][2];
+            njac[i][j][k][2][1] = 0.0;
+            njac[i][j][k][2][2] = c3c4 * tmp1;
+            njac[i][j][k][2][3] = 0.0;
+            njac[i][j][k][2][4] = 0.0;
 
-        njac[i][j][k][3][0] = -c3c4 * tmp2 * u[i][j][k][3];
-        njac[i][j][k][3][1] = 0.0;
-        njac[i][j][k][3][2] = 0.0;
-        njac[i][j][k][3][3] = c3c4 * tmp1;
-        njac[i][j][k][3][4] = 0.0;
+            njac[i][j][k][3][0] = -c3c4 * tmp2 * u[i][j][k][3];
+            njac[i][j][k][3][1] = 0.0;
+            njac[i][j][k][3][2] = 0.0;
+            njac[i][j][k][3][3] = c3c4 * tmp1;
+            njac[i][j][k][3][4] = 0.0;
 
-        njac[i][j][k][4][0] =
-            -(con43 * c3c4 - c1345) * tmp3 * (pow2(u[i][j][k][1])) -
-            (c3c4 - c1345) * tmp3 * (pow2(u[i][j][k][2])) -
-            (c3c4 - c1345) * tmp3 * (pow2(u[i][j][k][3])) -
-            c1345 * tmp2 * u[i][j][k][4];
+            njac[i][j][k][4][0] =
+                -(con43 * c3c4 - c1345) * tmp3 * (pow2(u[i][j][k][1])) -
+                (c3c4 - c1345) * tmp3 * (pow2(u[i][j][k][2])) -
+                (c3c4 - c1345) * tmp3 * (pow2(u[i][j][k][3])) -
+                c1345 * tmp2 * u[i][j][k][4];
 
-        njac[i][j][k][4][1] = (con43 * c3c4 - c1345) * tmp2 * u[i][j][k][1];
-        njac[i][j][k][4][2] = (c3c4 - c1345) * tmp2 * u[i][j][k][2];
-        njac[i][j][k][4][3] = (c3c4 - c1345) * tmp2 * u[i][j][k][3];
-        njac[i][j][k][4][4] = (c1345)*tmp1;
-      });
+            njac[i][j][k][4][1] = (con43 * c3c4 - c1345) * tmp2 * u[i][j][k][1];
+            njac[i][j][k][4][2] = (c3c4 - c1345) * tmp2 * u[i][j][k][2];
+            njac[i][j][k][4][3] = (c3c4 - c1345) * tmp2 * u[i][j][k][3];
+            njac[i][j][k][4][4] = (c1345)*tmp1;
+          });
       /*--------------------------------------------------------------------
       c     now jacobians set, so form left hand side in x direction
       c-------------------------------------------------------------------*/
-      auto i2range = view::ints(1, grid_points[0]-1);
-      NS::for_each(PARALLELUNSEQ,i2range.begin(), i2range.end(), [&](auto i) -> void {
+      NS::for_each(
+          NESTPARUNSEQ, i2range.begin(), i2range.end(), [&](auto i) -> void {
+            double tmp1 = dt * tx1;
+            double tmp2 = dt * tx2;
 
-        double tmp1 = dt * tx1;
-        double tmp2 = dt * tx2;
+            lhs[i][j][k][AA][0][0] = -tmp2 * fjac[i - 1][j][k][0][0] -
+                                     tmp1 * njac[i - 1][j][k][0][0] -
+                                     tmp1 * dx1;
+            lhs[i][j][k][AA][0][1] = -tmp2 * fjac[i - 1][j][k][0][1] -
+                                     tmp1 * njac[i - 1][j][k][0][1];
+            lhs[i][j][k][AA][0][2] = -tmp2 * fjac[i - 1][j][k][0][2] -
+                                     tmp1 * njac[i - 1][j][k][0][2];
+            lhs[i][j][k][AA][0][3] = -tmp2 * fjac[i - 1][j][k][0][3] -
+                                     tmp1 * njac[i - 1][j][k][0][3];
+            lhs[i][j][k][AA][0][4] = -tmp2 * fjac[i - 1][j][k][0][4] -
+                                     tmp1 * njac[i - 1][j][k][0][4];
 
-        lhs[i][j][k][AA][0][0] = -tmp2 * fjac[i - 1][j][k][0][0] -
-                                 tmp1 * njac[i - 1][j][k][0][0] - tmp1 * dx1;
-        lhs[i][j][k][AA][0][1] =
-            -tmp2 * fjac[i - 1][j][k][0][1] - tmp1 * njac[i - 1][j][k][0][1];
-        lhs[i][j][k][AA][0][2] =
-            -tmp2 * fjac[i - 1][j][k][0][2] - tmp1 * njac[i - 1][j][k][0][2];
-        lhs[i][j][k][AA][0][3] =
-            -tmp2 * fjac[i - 1][j][k][0][3] - tmp1 * njac[i - 1][j][k][0][3];
-        lhs[i][j][k][AA][0][4] =
-            -tmp2 * fjac[i - 1][j][k][0][4] - tmp1 * njac[i - 1][j][k][0][4];
+            lhs[i][j][k][AA][1][0] = -tmp2 * fjac[i - 1][j][k][1][0] -
+                                     tmp1 * njac[i - 1][j][k][1][0];
+            lhs[i][j][k][AA][1][1] = -tmp2 * fjac[i - 1][j][k][1][1] -
+                                     tmp1 * njac[i - 1][j][k][1][1] -
+                                     tmp1 * dx2;
+            lhs[i][j][k][AA][1][2] = -tmp2 * fjac[i - 1][j][k][1][2] -
+                                     tmp1 * njac[i - 1][j][k][1][2];
+            lhs[i][j][k][AA][1][3] = -tmp2 * fjac[i - 1][j][k][1][3] -
+                                     tmp1 * njac[i - 1][j][k][1][3];
+            lhs[i][j][k][AA][1][4] = -tmp2 * fjac[i - 1][j][k][1][4] -
+                                     tmp1 * njac[i - 1][j][k][1][4];
 
-        lhs[i][j][k][AA][1][0] =
-            -tmp2 * fjac[i - 1][j][k][1][0] - tmp1 * njac[i - 1][j][k][1][0];
-        lhs[i][j][k][AA][1][1] = -tmp2 * fjac[i - 1][j][k][1][1] -
-                                 tmp1 * njac[i - 1][j][k][1][1] - tmp1 * dx2;
-        lhs[i][j][k][AA][1][2] =
-            -tmp2 * fjac[i - 1][j][k][1][2] - tmp1 * njac[i - 1][j][k][1][2];
-        lhs[i][j][k][AA][1][3] =
-            -tmp2 * fjac[i - 1][j][k][1][3] - tmp1 * njac[i - 1][j][k][1][3];
-        lhs[i][j][k][AA][1][4] =
-            -tmp2 * fjac[i - 1][j][k][1][4] - tmp1 * njac[i - 1][j][k][1][4];
+            lhs[i][j][k][AA][2][0] = -tmp2 * fjac[i - 1][j][k][2][0] -
+                                     tmp1 * njac[i - 1][j][k][2][0];
+            lhs[i][j][k][AA][2][1] = -tmp2 * fjac[i - 1][j][k][2][1] -
+                                     tmp1 * njac[i - 1][j][k][2][1];
+            lhs[i][j][k][AA][2][2] = -tmp2 * fjac[i - 1][j][k][2][2] -
+                                     tmp1 * njac[i - 1][j][k][2][2] -
+                                     tmp1 * dx3;
+            lhs[i][j][k][AA][2][3] = -tmp2 * fjac[i - 1][j][k][2][3] -
+                                     tmp1 * njac[i - 1][j][k][2][3];
+            lhs[i][j][k][AA][2][4] = -tmp2 * fjac[i - 1][j][k][2][4] -
+                                     tmp1 * njac[i - 1][j][k][2][4];
 
-        lhs[i][j][k][AA][2][0] =
-            -tmp2 * fjac[i - 1][j][k][2][0] - tmp1 * njac[i - 1][j][k][2][0];
-        lhs[i][j][k][AA][2][1] =
-            -tmp2 * fjac[i - 1][j][k][2][1] - tmp1 * njac[i - 1][j][k][2][1];
-        lhs[i][j][k][AA][2][2] = -tmp2 * fjac[i - 1][j][k][2][2] -
-                                 tmp1 * njac[i - 1][j][k][2][2] - tmp1 * dx3;
-        lhs[i][j][k][AA][2][3] =
-            -tmp2 * fjac[i - 1][j][k][2][3] - tmp1 * njac[i - 1][j][k][2][3];
-        lhs[i][j][k][AA][2][4] =
-            -tmp2 * fjac[i - 1][j][k][2][4] - tmp1 * njac[i - 1][j][k][2][4];
+            lhs[i][j][k][AA][3][0] = -tmp2 * fjac[i - 1][j][k][3][0] -
+                                     tmp1 * njac[i - 1][j][k][3][0];
+            lhs[i][j][k][AA][3][1] = -tmp2 * fjac[i - 1][j][k][3][1] -
+                                     tmp1 * njac[i - 1][j][k][3][1];
+            lhs[i][j][k][AA][3][2] = -tmp2 * fjac[i - 1][j][k][3][2] -
+                                     tmp1 * njac[i - 1][j][k][3][2];
+            lhs[i][j][k][AA][3][3] = -tmp2 * fjac[i - 1][j][k][3][3] -
+                                     tmp1 * njac[i - 1][j][k][3][3] -
+                                     tmp1 * dx4;
+            lhs[i][j][k][AA][3][4] = -tmp2 * fjac[i - 1][j][k][3][4] -
+                                     tmp1 * njac[i - 1][j][k][3][4];
 
-        lhs[i][j][k][AA][3][0] =
-            -tmp2 * fjac[i - 1][j][k][3][0] - tmp1 * njac[i - 1][j][k][3][0];
-        lhs[i][j][k][AA][3][1] =
-            -tmp2 * fjac[i - 1][j][k][3][1] - tmp1 * njac[i - 1][j][k][3][1];
-        lhs[i][j][k][AA][3][2] =
-            -tmp2 * fjac[i - 1][j][k][3][2] - tmp1 * njac[i - 1][j][k][3][2];
-        lhs[i][j][k][AA][3][3] = -tmp2 * fjac[i - 1][j][k][3][3] -
-                                 tmp1 * njac[i - 1][j][k][3][3] - tmp1 * dx4;
-        lhs[i][j][k][AA][3][4] =
-            -tmp2 * fjac[i - 1][j][k][3][4] - tmp1 * njac[i - 1][j][k][3][4];
+            lhs[i][j][k][AA][4][0] = -tmp2 * fjac[i - 1][j][k][4][0] -
+                                     tmp1 * njac[i - 1][j][k][4][0];
+            lhs[i][j][k][AA][4][1] = -tmp2 * fjac[i - 1][j][k][4][1] -
+                                     tmp1 * njac[i - 1][j][k][4][1];
+            lhs[i][j][k][AA][4][2] = -tmp2 * fjac[i - 1][j][k][4][2] -
+                                     tmp1 * njac[i - 1][j][k][4][2];
+            lhs[i][j][k][AA][4][3] = -tmp2 * fjac[i - 1][j][k][4][3] -
+                                     tmp1 * njac[i - 1][j][k][4][3];
+            lhs[i][j][k][AA][4][4] = -tmp2 * fjac[i - 1][j][k][4][4] -
+                                     tmp1 * njac[i - 1][j][k][4][4] -
+                                     tmp1 * dx5;
 
-        lhs[i][j][k][AA][4][0] =
-            -tmp2 * fjac[i - 1][j][k][4][0] - tmp1 * njac[i - 1][j][k][4][0];
-        lhs[i][j][k][AA][4][1] =
-            -tmp2 * fjac[i - 1][j][k][4][1] - tmp1 * njac[i - 1][j][k][4][1];
-        lhs[i][j][k][AA][4][2] =
-            -tmp2 * fjac[i - 1][j][k][4][2] - tmp1 * njac[i - 1][j][k][4][2];
-        lhs[i][j][k][AA][4][3] =
-            -tmp2 * fjac[i - 1][j][k][4][3] - tmp1 * njac[i - 1][j][k][4][3];
-        lhs[i][j][k][AA][4][4] = -tmp2 * fjac[i - 1][j][k][4][4] -
-                                 tmp1 * njac[i - 1][j][k][4][4] - tmp1 * dx5;
+            lhs[i][j][k][BB][0][0] =
+                1.0 + tmp1 * 2.0 * njac[i][j][k][0][0] + tmp1 * 2.0 * dx1;
+            lhs[i][j][k][BB][0][1] = tmp1 * 2.0 * njac[i][j][k][0][1];
+            lhs[i][j][k][BB][0][2] = tmp1 * 2.0 * njac[i][j][k][0][2];
+            lhs[i][j][k][BB][0][3] = tmp1 * 2.0 * njac[i][j][k][0][3];
+            lhs[i][j][k][BB][0][4] = tmp1 * 2.0 * njac[i][j][k][0][4];
 
-        lhs[i][j][k][BB][0][0] =
-            1.0 + tmp1 * 2.0 * njac[i][j][k][0][0] + tmp1 * 2.0 * dx1;
-        lhs[i][j][k][BB][0][1] = tmp1 * 2.0 * njac[i][j][k][0][1];
-        lhs[i][j][k][BB][0][2] = tmp1 * 2.0 * njac[i][j][k][0][2];
-        lhs[i][j][k][BB][0][3] = tmp1 * 2.0 * njac[i][j][k][0][3];
-        lhs[i][j][k][BB][0][4] = tmp1 * 2.0 * njac[i][j][k][0][4];
+            lhs[i][j][k][BB][1][0] = tmp1 * 2.0 * njac[i][j][k][1][0];
+            lhs[i][j][k][BB][1][1] =
+                1.0 + tmp1 * 2.0 * njac[i][j][k][1][1] + tmp1 * 2.0 * dx2;
+            lhs[i][j][k][BB][1][2] = tmp1 * 2.0 * njac[i][j][k][1][2];
+            lhs[i][j][k][BB][1][3] = tmp1 * 2.0 * njac[i][j][k][1][3];
+            lhs[i][j][k][BB][1][4] = tmp1 * 2.0 * njac[i][j][k][1][4];
 
-        lhs[i][j][k][BB][1][0] = tmp1 * 2.0 * njac[i][j][k][1][0];
-        lhs[i][j][k][BB][1][1] =
-            1.0 + tmp1 * 2.0 * njac[i][j][k][1][1] + tmp1 * 2.0 * dx2;
-        lhs[i][j][k][BB][1][2] = tmp1 * 2.0 * njac[i][j][k][1][2];
-        lhs[i][j][k][BB][1][3] = tmp1 * 2.0 * njac[i][j][k][1][3];
-        lhs[i][j][k][BB][1][4] = tmp1 * 2.0 * njac[i][j][k][1][4];
+            lhs[i][j][k][BB][2][0] = tmp1 * 2.0 * njac[i][j][k][2][0];
+            lhs[i][j][k][BB][2][1] = tmp1 * 2.0 * njac[i][j][k][2][1];
+            lhs[i][j][k][BB][2][2] =
+                1.0 + tmp1 * 2.0 * njac[i][j][k][2][2] + tmp1 * 2.0 * dx3;
+            lhs[i][j][k][BB][2][3] = tmp1 * 2.0 * njac[i][j][k][2][3];
+            lhs[i][j][k][BB][2][4] = tmp1 * 2.0 * njac[i][j][k][2][4];
 
-        lhs[i][j][k][BB][2][0] = tmp1 * 2.0 * njac[i][j][k][2][0];
-        lhs[i][j][k][BB][2][1] = tmp1 * 2.0 * njac[i][j][k][2][1];
-        lhs[i][j][k][BB][2][2] =
-            1.0 + tmp1 * 2.0 * njac[i][j][k][2][2] + tmp1 * 2.0 * dx3;
-        lhs[i][j][k][BB][2][3] = tmp1 * 2.0 * njac[i][j][k][2][3];
-        lhs[i][j][k][BB][2][4] = tmp1 * 2.0 * njac[i][j][k][2][4];
+            lhs[i][j][k][BB][3][0] = tmp1 * 2.0 * njac[i][j][k][3][0];
+            lhs[i][j][k][BB][3][1] = tmp1 * 2.0 * njac[i][j][k][3][1];
+            lhs[i][j][k][BB][3][2] = tmp1 * 2.0 * njac[i][j][k][3][2];
+            lhs[i][j][k][BB][3][3] =
+                1.0 + tmp1 * 2.0 * njac[i][j][k][3][3] + tmp1 * 2.0 * dx4;
+            lhs[i][j][k][BB][3][4] = tmp1 * 2.0 * njac[i][j][k][3][4];
 
-        lhs[i][j][k][BB][3][0] = tmp1 * 2.0 * njac[i][j][k][3][0];
-        lhs[i][j][k][BB][3][1] = tmp1 * 2.0 * njac[i][j][k][3][1];
-        lhs[i][j][k][BB][3][2] = tmp1 * 2.0 * njac[i][j][k][3][2];
-        lhs[i][j][k][BB][3][3] =
-            1.0 + tmp1 * 2.0 * njac[i][j][k][3][3] + tmp1 * 2.0 * dx4;
-        lhs[i][j][k][BB][3][4] = tmp1 * 2.0 * njac[i][j][k][3][4];
+            lhs[i][j][k][BB][4][0] = tmp1 * 2.0 * njac[i][j][k][4][0];
+            lhs[i][j][k][BB][4][1] = tmp1 * 2.0 * njac[i][j][k][4][1];
+            lhs[i][j][k][BB][4][2] = tmp1 * 2.0 * njac[i][j][k][4][2];
+            lhs[i][j][k][BB][4][3] = tmp1 * 2.0 * njac[i][j][k][4][3];
+            lhs[i][j][k][BB][4][4] =
+                1.0 + tmp1 * 2.0 * njac[i][j][k][4][4] + tmp1 * 2.0 * dx5;
 
-        lhs[i][j][k][BB][4][0] = tmp1 * 2.0 * njac[i][j][k][4][0];
-        lhs[i][j][k][BB][4][1] = tmp1 * 2.0 * njac[i][j][k][4][1];
-        lhs[i][j][k][BB][4][2] = tmp1 * 2.0 * njac[i][j][k][4][2];
-        lhs[i][j][k][BB][4][3] = tmp1 * 2.0 * njac[i][j][k][4][3];
-        lhs[i][j][k][BB][4][4] =
-            1.0 + tmp1 * 2.0 * njac[i][j][k][4][4] + tmp1 * 2.0 * dx5;
+            lhs[i][j][k][CC][0][0] = tmp2 * fjac[i + 1][j][k][0][0] -
+                                     tmp1 * njac[i + 1][j][k][0][0] -
+                                     tmp1 * dx1;
+            lhs[i][j][k][CC][0][1] =
+                tmp2 * fjac[i + 1][j][k][0][1] - tmp1 * njac[i + 1][j][k][0][1];
+            lhs[i][j][k][CC][0][2] =
+                tmp2 * fjac[i + 1][j][k][0][2] - tmp1 * njac[i + 1][j][k][0][2];
+            lhs[i][j][k][CC][0][3] =
+                tmp2 * fjac[i + 1][j][k][0][3] - tmp1 * njac[i + 1][j][k][0][3];
+            lhs[i][j][k][CC][0][4] =
+                tmp2 * fjac[i + 1][j][k][0][4] - tmp1 * njac[i + 1][j][k][0][4];
 
-        lhs[i][j][k][CC][0][0] = tmp2 * fjac[i + 1][j][k][0][0] -
-                                 tmp1 * njac[i + 1][j][k][0][0] - tmp1 * dx1;
-        lhs[i][j][k][CC][0][1] =
-            tmp2 * fjac[i + 1][j][k][0][1] - tmp1 * njac[i + 1][j][k][0][1];
-        lhs[i][j][k][CC][0][2] =
-            tmp2 * fjac[i + 1][j][k][0][2] - tmp1 * njac[i + 1][j][k][0][2];
-        lhs[i][j][k][CC][0][3] =
-            tmp2 * fjac[i + 1][j][k][0][3] - tmp1 * njac[i + 1][j][k][0][3];
-        lhs[i][j][k][CC][0][4] =
-            tmp2 * fjac[i + 1][j][k][0][4] - tmp1 * njac[i + 1][j][k][0][4];
+            lhs[i][j][k][CC][1][0] =
+                tmp2 * fjac[i + 1][j][k][1][0] - tmp1 * njac[i + 1][j][k][1][0];
+            lhs[i][j][k][CC][1][1] = tmp2 * fjac[i + 1][j][k][1][1] -
+                                     tmp1 * njac[i + 1][j][k][1][1] -
+                                     tmp1 * dx2;
+            lhs[i][j][k][CC][1][2] =
+                tmp2 * fjac[i + 1][j][k][1][2] - tmp1 * njac[i + 1][j][k][1][2];
+            lhs[i][j][k][CC][1][3] =
+                tmp2 * fjac[i + 1][j][k][1][3] - tmp1 * njac[i + 1][j][k][1][3];
+            lhs[i][j][k][CC][1][4] =
+                tmp2 * fjac[i + 1][j][k][1][4] - tmp1 * njac[i + 1][j][k][1][4];
 
-        lhs[i][j][k][CC][1][0] =
-            tmp2 * fjac[i + 1][j][k][1][0] - tmp1 * njac[i + 1][j][k][1][0];
-        lhs[i][j][k][CC][1][1] = tmp2 * fjac[i + 1][j][k][1][1] -
-                                 tmp1 * njac[i + 1][j][k][1][1] - tmp1 * dx2;
-        lhs[i][j][k][CC][1][2] =
-            tmp2 * fjac[i + 1][j][k][1][2] - tmp1 * njac[i + 1][j][k][1][2];
-        lhs[i][j][k][CC][1][3] =
-            tmp2 * fjac[i + 1][j][k][1][3] - tmp1 * njac[i + 1][j][k][1][3];
-        lhs[i][j][k][CC][1][4] =
-            tmp2 * fjac[i + 1][j][k][1][4] - tmp1 * njac[i + 1][j][k][1][4];
+            lhs[i][j][k][CC][2][0] =
+                tmp2 * fjac[i + 1][j][k][2][0] - tmp1 * njac[i + 1][j][k][2][0];
+            lhs[i][j][k][CC][2][1] =
+                tmp2 * fjac[i + 1][j][k][2][1] - tmp1 * njac[i + 1][j][k][2][1];
+            lhs[i][j][k][CC][2][2] = tmp2 * fjac[i + 1][j][k][2][2] -
+                                     tmp1 * njac[i + 1][j][k][2][2] -
+                                     tmp1 * dx3;
+            lhs[i][j][k][CC][2][3] =
+                tmp2 * fjac[i + 1][j][k][2][3] - tmp1 * njac[i + 1][j][k][2][3];
+            lhs[i][j][k][CC][2][4] =
+                tmp2 * fjac[i + 1][j][k][2][4] - tmp1 * njac[i + 1][j][k][2][4];
 
-        lhs[i][j][k][CC][2][0] =
-            tmp2 * fjac[i + 1][j][k][2][0] - tmp1 * njac[i + 1][j][k][2][0];
-        lhs[i][j][k][CC][2][1] =
-            tmp2 * fjac[i + 1][j][k][2][1] - tmp1 * njac[i + 1][j][k][2][1];
-        lhs[i][j][k][CC][2][2] = tmp2 * fjac[i + 1][j][k][2][2] -
-                                 tmp1 * njac[i + 1][j][k][2][2] - tmp1 * dx3;
-        lhs[i][j][k][CC][2][3] =
-            tmp2 * fjac[i + 1][j][k][2][3] - tmp1 * njac[i + 1][j][k][2][3];
-        lhs[i][j][k][CC][2][4] =
-            tmp2 * fjac[i + 1][j][k][2][4] - tmp1 * njac[i + 1][j][k][2][4];
+            lhs[i][j][k][CC][3][0] =
+                tmp2 * fjac[i + 1][j][k][3][0] - tmp1 * njac[i + 1][j][k][3][0];
+            lhs[i][j][k][CC][3][1] =
+                tmp2 * fjac[i + 1][j][k][3][1] - tmp1 * njac[i + 1][j][k][3][1];
+            lhs[i][j][k][CC][3][2] =
+                tmp2 * fjac[i + 1][j][k][3][2] - tmp1 * njac[i + 1][j][k][3][2];
+            lhs[i][j][k][CC][3][3] = tmp2 * fjac[i + 1][j][k][3][3] -
+                                     tmp1 * njac[i + 1][j][k][3][3] -
+                                     tmp1 * dx4;
+            lhs[i][j][k][CC][3][4] =
+                tmp2 * fjac[i + 1][j][k][3][4] - tmp1 * njac[i + 1][j][k][3][4];
 
-        lhs[i][j][k][CC][3][0] =
-            tmp2 * fjac[i + 1][j][k][3][0] - tmp1 * njac[i + 1][j][k][3][0];
-        lhs[i][j][k][CC][3][1] =
-            tmp2 * fjac[i + 1][j][k][3][1] - tmp1 * njac[i + 1][j][k][3][1];
-        lhs[i][j][k][CC][3][2] =
-            tmp2 * fjac[i + 1][j][k][3][2] - tmp1 * njac[i + 1][j][k][3][2];
-        lhs[i][j][k][CC][3][3] = tmp2 * fjac[i + 1][j][k][3][3] -
-                                 tmp1 * njac[i + 1][j][k][3][3] - tmp1 * dx4;
-        lhs[i][j][k][CC][3][4] =
-            tmp2 * fjac[i + 1][j][k][3][4] - tmp1 * njac[i + 1][j][k][3][4];
-
-        lhs[i][j][k][CC][4][0] =
-            tmp2 * fjac[i + 1][j][k][4][0] - tmp1 * njac[i + 1][j][k][4][0];
-        lhs[i][j][k][CC][4][1] =
-            tmp2 * fjac[i + 1][j][k][4][1] - tmp1 * njac[i + 1][j][k][4][1];
-        lhs[i][j][k][CC][4][2] =
-            tmp2 * fjac[i + 1][j][k][4][2] - tmp1 * njac[i + 1][j][k][4][2];
-        lhs[i][j][k][CC][4][3] =
-            tmp2 * fjac[i + 1][j][k][4][3] - tmp1 * njac[i + 1][j][k][4][3];
-        lhs[i][j][k][CC][4][4] = tmp2 * fjac[i + 1][j][k][4][4] -
-                                 tmp1 * njac[i + 1][j][k][4][4] - tmp1 * dx5;
-      });
+            lhs[i][j][k][CC][4][0] =
+                tmp2 * fjac[i + 1][j][k][4][0] - tmp1 * njac[i + 1][j][k][4][0];
+            lhs[i][j][k][CC][4][1] =
+                tmp2 * fjac[i + 1][j][k][4][1] - tmp1 * njac[i + 1][j][k][4][1];
+            lhs[i][j][k][CC][4][2] =
+                tmp2 * fjac[i + 1][j][k][4][2] - tmp1 * njac[i + 1][j][k][4][2];
+            lhs[i][j][k][CC][4][3] =
+                tmp2 * fjac[i + 1][j][k][4][3] - tmp1 * njac[i + 1][j][k][4][3];
+            lhs[i][j][k][CC][4][4] = tmp2 * fjac[i + 1][j][k][4][4] -
+                                     tmp1 * njac[i + 1][j][k][4][4] -
+                                     tmp1 * dx5;
+          });
     });
   });
 }
@@ -1150,257 +1142,267 @@ void lhsy(void) {
   c     Compute the indices for storing the tri-diagonal matrix;
   c     determine a (labeled f) and n jacobians for cell c
   c-------------------------------------------------------------------*/
-  auto irange = view::ints(1, grid_points[0] - 1);
-  auto jrange = view::ints(0, grid_points[1]);
-  auto krange = view::ints(1, grid_points[2] - 1);
-  NS::for_each(PARALLEL,irange.begin(), irange.end(), [&](auto i) -> void {
-    NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-      NS::for_each(PARALLELUNSEQ,krange.begin(), krange.end(), [&](auto k) -> void {
-        double tmp1 = 1.0 / u[i][j][k][0];
-        double tmp2 = tmp1 * tmp1;
-        double tmp3 = tmp1 * tmp2;
+  MAKE_RANGE(1, grid_points[0] - 1, irange);
+  MAKE_RANGE(0, grid_points[1], jrange);
+  MAKE_RANGE(1, grid_points[2] - 1, krange);
+  NS::for_each(PARALLEL, irange.begin(), irange.end(), [&](auto i) -> void {
+    NS::for_each(NESTPAR, jrange.begin(), jrange.end(), [&](auto j) -> void {
+      NS::for_each(
+          NESTPARUNSEQ, krange.begin(), krange.end(), [&](auto k) -> void {
+            double tmp1 = 1.0 / u[i][j][k][0];
+            double tmp2 = tmp1 * tmp1;
+            double tmp3 = tmp1 * tmp2;
 
-        fjac[i][j][k][0][0] = 0.0;
-        fjac[i][j][k][0][1] = 0.0;
-        fjac[i][j][k][0][2] = 1.0;
-        fjac[i][j][k][0][3] = 0.0;
-        fjac[i][j][k][0][4] = 0.0;
+            fjac[i][j][k][0][0] = 0.0;
+            fjac[i][j][k][0][1] = 0.0;
+            fjac[i][j][k][0][2] = 1.0;
+            fjac[i][j][k][0][3] = 0.0;
+            fjac[i][j][k][0][4] = 0.0;
 
-        fjac[i][j][k][1][0] = -(u[i][j][k][1] * u[i][j][k][2]) * tmp2;
-        fjac[i][j][k][1][1] = u[i][j][k][2] * tmp1;
-        fjac[i][j][k][1][2] = u[i][j][k][1] * tmp1;
-        fjac[i][j][k][1][3] = 0.0;
-        fjac[i][j][k][1][4] = 0.0;
+            fjac[i][j][k][1][0] = -(u[i][j][k][1] * u[i][j][k][2]) * tmp2;
+            fjac[i][j][k][1][1] = u[i][j][k][2] * tmp1;
+            fjac[i][j][k][1][2] = u[i][j][k][1] * tmp1;
+            fjac[i][j][k][1][3] = 0.0;
+            fjac[i][j][k][1][4] = 0.0;
 
-        fjac[i][j][k][2][0] = -(u[i][j][k][2] * u[i][j][k][2] * tmp2) +
-                              0.50 * c2 *
-                                  ((u[i][j][k][1] * u[i][j][k][1] +
-                                    u[i][j][k][2] * u[i][j][k][2] +
-                                    u[i][j][k][3] * u[i][j][k][3]) *
-                                   tmp2);
-        fjac[i][j][k][2][1] = -c2 * u[i][j][k][1] * tmp1;
-        fjac[i][j][k][2][2] = (2.0 - c2) * u[i][j][k][2] * tmp1;
-        fjac[i][j][k][2][3] = -c2 * u[i][j][k][3] * tmp1;
-        fjac[i][j][k][2][4] = c2;
+            fjac[i][j][k][2][0] = -(u[i][j][k][2] * u[i][j][k][2] * tmp2) +
+                                  0.50 * c2 *
+                                      ((u[i][j][k][1] * u[i][j][k][1] +
+                                        u[i][j][k][2] * u[i][j][k][2] +
+                                        u[i][j][k][3] * u[i][j][k][3]) *
+                                       tmp2);
+            fjac[i][j][k][2][1] = -c2 * u[i][j][k][1] * tmp1;
+            fjac[i][j][k][2][2] = (2.0 - c2) * u[i][j][k][2] * tmp1;
+            fjac[i][j][k][2][3] = -c2 * u[i][j][k][3] * tmp1;
+            fjac[i][j][k][2][4] = c2;
 
-        fjac[i][j][k][3][0] = -(u[i][j][k][2] * u[i][j][k][3]) * tmp2;
-        fjac[i][j][k][3][1] = 0.0;
-        fjac[i][j][k][3][2] = u[i][j][k][3] * tmp1;
-        fjac[i][j][k][3][3] = u[i][j][k][2] * tmp1;
-        fjac[i][j][k][3][4] = 0.0;
+            fjac[i][j][k][3][0] = -(u[i][j][k][2] * u[i][j][k][3]) * tmp2;
+            fjac[i][j][k][3][1] = 0.0;
+            fjac[i][j][k][3][2] = u[i][j][k][3] * tmp1;
+            fjac[i][j][k][3][3] = u[i][j][k][2] * tmp1;
+            fjac[i][j][k][3][4] = 0.0;
 
-        fjac[i][j][k][4][0] = (c2 *
-                                   (u[i][j][k][1] * u[i][j][k][1] +
-                                    u[i][j][k][2] * u[i][j][k][2] +
-                                    u[i][j][k][3] * u[i][j][k][3]) *
-                                   tmp2 -
-                               c1 * u[i][j][k][4] * tmp1) *
-                              u[i][j][k][2] * tmp1;
-        fjac[i][j][k][4][1] = -c2 * u[i][j][k][1] * u[i][j][k][2] * tmp2;
-        fjac[i][j][k][4][2] = c1 * u[i][j][k][4] * tmp1 -
-                              0.50 * c2 *
-                                  ((u[i][j][k][1] * u[i][j][k][1] +
-                                    3.0 * u[i][j][k][2] * u[i][j][k][2] +
-                                    u[i][j][k][3] * u[i][j][k][3]) *
-                                   tmp2);
-        fjac[i][j][k][4][3] = -c2 * (u[i][j][k][2] * u[i][j][k][3]) * tmp2;
-        fjac[i][j][k][4][4] = c1 * u[i][j][k][2] * tmp1;
+            fjac[i][j][k][4][0] = (c2 *
+                                       (u[i][j][k][1] * u[i][j][k][1] +
+                                        u[i][j][k][2] * u[i][j][k][2] +
+                                        u[i][j][k][3] * u[i][j][k][3]) *
+                                       tmp2 -
+                                   c1 * u[i][j][k][4] * tmp1) *
+                                  u[i][j][k][2] * tmp1;
+            fjac[i][j][k][4][1] = -c2 * u[i][j][k][1] * u[i][j][k][2] * tmp2;
+            fjac[i][j][k][4][2] = c1 * u[i][j][k][4] * tmp1 -
+                                  0.50 * c2 *
+                                      ((u[i][j][k][1] * u[i][j][k][1] +
+                                        3.0 * u[i][j][k][2] * u[i][j][k][2] +
+                                        u[i][j][k][3] * u[i][j][k][3]) *
+                                       tmp2);
+            fjac[i][j][k][4][3] = -c2 * (u[i][j][k][2] * u[i][j][k][3]) * tmp2;
+            fjac[i][j][k][4][4] = c1 * u[i][j][k][2] * tmp1;
 
-        njac[i][j][k][0][0] = 0.0;
-        njac[i][j][k][0][1] = 0.0;
-        njac[i][j][k][0][2] = 0.0;
-        njac[i][j][k][0][3] = 0.0;
-        njac[i][j][k][0][4] = 0.0;
+            njac[i][j][k][0][0] = 0.0;
+            njac[i][j][k][0][1] = 0.0;
+            njac[i][j][k][0][2] = 0.0;
+            njac[i][j][k][0][3] = 0.0;
+            njac[i][j][k][0][4] = 0.0;
 
-        njac[i][j][k][1][0] = -c3c4 * tmp2 * u[i][j][k][1];
-        njac[i][j][k][1][1] = c3c4 * tmp1;
-        njac[i][j][k][1][2] = 0.0;
-        njac[i][j][k][1][3] = 0.0;
-        njac[i][j][k][1][4] = 0.0;
+            njac[i][j][k][1][0] = -c3c4 * tmp2 * u[i][j][k][1];
+            njac[i][j][k][1][1] = c3c4 * tmp1;
+            njac[i][j][k][1][2] = 0.0;
+            njac[i][j][k][1][3] = 0.0;
+            njac[i][j][k][1][4] = 0.0;
 
-        njac[i][j][k][2][0] = -con43 * c3c4 * tmp2 * u[i][j][k][2];
-        njac[i][j][k][2][1] = 0.0;
-        njac[i][j][k][2][2] = con43 * c3c4 * tmp1;
-        njac[i][j][k][2][3] = 0.0;
-        njac[i][j][k][2][4] = 0.0;
+            njac[i][j][k][2][0] = -con43 * c3c4 * tmp2 * u[i][j][k][2];
+            njac[i][j][k][2][1] = 0.0;
+            njac[i][j][k][2][2] = con43 * c3c4 * tmp1;
+            njac[i][j][k][2][3] = 0.0;
+            njac[i][j][k][2][4] = 0.0;
 
-        njac[i][j][k][3][0] = -c3c4 * tmp2 * u[i][j][k][3];
-        njac[i][j][k][3][1] = 0.0;
-        njac[i][j][k][3][2] = 0.0;
-        njac[i][j][k][3][3] = c3c4 * tmp1;
-        njac[i][j][k][3][4] = 0.0;
+            njac[i][j][k][3][0] = -c3c4 * tmp2 * u[i][j][k][3];
+            njac[i][j][k][3][1] = 0.0;
+            njac[i][j][k][3][2] = 0.0;
+            njac[i][j][k][3][3] = c3c4 * tmp1;
+            njac[i][j][k][3][4] = 0.0;
 
-        njac[i][j][k][4][0] =
-            -(c3c4 - c1345) * tmp3 * (pow2(u[i][j][k][1])) -
-            (con43 * c3c4 - c1345) * tmp3 * (pow2(u[i][j][k][2])) -
-            (c3c4 - c1345) * tmp3 * (pow2(u[i][j][k][3])) -
-            c1345 * tmp2 * u[i][j][k][4];
+            njac[i][j][k][4][0] =
+                -(c3c4 - c1345) * tmp3 * (pow2(u[i][j][k][1])) -
+                (con43 * c3c4 - c1345) * tmp3 * (pow2(u[i][j][k][2])) -
+                (c3c4 - c1345) * tmp3 * (pow2(u[i][j][k][3])) -
+                c1345 * tmp2 * u[i][j][k][4];
 
-        njac[i][j][k][4][1] = (c3c4 - c1345) * tmp2 * u[i][j][k][1];
-        njac[i][j][k][4][2] = (con43 * c3c4 - c1345) * tmp2 * u[i][j][k][2];
-        njac[i][j][k][4][3] = (c3c4 - c1345) * tmp2 * u[i][j][k][3];
-        njac[i][j][k][4][4] = (c1345)*tmp1;
-      });
+            njac[i][j][k][4][1] = (c3c4 - c1345) * tmp2 * u[i][j][k][1];
+            njac[i][j][k][4][2] = (con43 * c3c4 - c1345) * tmp2 * u[i][j][k][2];
+            njac[i][j][k][4][3] = (c3c4 - c1345) * tmp2 * u[i][j][k][3];
+            njac[i][j][k][4][4] = (c1345)*tmp1;
+          });
     });
   });
 
   /*--------------------------------------------------------------------
   c     now joacobians set, so form left hand side in y direction
   c-------------------------------------------------------------------*/
-  irange = view::ints(1, grid_points[0] - 1);
-  jrange = view::ints(1, grid_points[1] - 1);
-  krange = view::ints(1, grid_points[2] - 1);
-  NS::for_each(PARALLEL,irange.begin(), irange.end(), [&](auto i) -> void {
-    NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-      NS::for_each(PARALLELUNSEQ,krange.begin(), krange.end(), [&](auto k) -> void {
-        double tmp1 = dt * ty1;
-        double tmp2 = dt * ty2;
+  MAKE_RANGE_UNDEF(1, grid_points[1] - 1, jrange);
+  NS::for_each(PARALLEL, irange.begin(), irange.end(), [&](auto i) -> void {
+    NS::for_each(NESTPAR, jrange.begin(), jrange.end(), [&](auto j) -> void {
+      NS::for_each(
+          NESTPARUNSEQ, krange.begin(), krange.end(), [&](auto k) -> void {
+            double tmp1 = dt * ty1;
+            double tmp2 = dt * ty2;
 
-        lhs[i][j][k][AA][0][0] = -tmp2 * fjac[i][j - 1][k][0][0] -
-                                 tmp1 * njac[i][j - 1][k][0][0] - tmp1 * dy1;
-        lhs[i][j][k][AA][0][1] =
-            -tmp2 * fjac[i][j - 1][k][0][1] - tmp1 * njac[i][j - 1][k][0][1];
-        lhs[i][j][k][AA][0][2] =
-            -tmp2 * fjac[i][j - 1][k][0][2] - tmp1 * njac[i][j - 1][k][0][2];
-        lhs[i][j][k][AA][0][3] =
-            -tmp2 * fjac[i][j - 1][k][0][3] - tmp1 * njac[i][j - 1][k][0][3];
-        lhs[i][j][k][AA][0][4] =
-            -tmp2 * fjac[i][j - 1][k][0][4] - tmp1 * njac[i][j - 1][k][0][4];
+            lhs[i][j][k][AA][0][0] = -tmp2 * fjac[i][j - 1][k][0][0] -
+                                     tmp1 * njac[i][j - 1][k][0][0] -
+                                     tmp1 * dy1;
+            lhs[i][j][k][AA][0][1] = -tmp2 * fjac[i][j - 1][k][0][1] -
+                                     tmp1 * njac[i][j - 1][k][0][1];
+            lhs[i][j][k][AA][0][2] = -tmp2 * fjac[i][j - 1][k][0][2] -
+                                     tmp1 * njac[i][j - 1][k][0][2];
+            lhs[i][j][k][AA][0][3] = -tmp2 * fjac[i][j - 1][k][0][3] -
+                                     tmp1 * njac[i][j - 1][k][0][3];
+            lhs[i][j][k][AA][0][4] = -tmp2 * fjac[i][j - 1][k][0][4] -
+                                     tmp1 * njac[i][j - 1][k][0][4];
 
-        lhs[i][j][k][AA][1][0] =
-            -tmp2 * fjac[i][j - 1][k][1][0] - tmp1 * njac[i][j - 1][k][1][0];
-        lhs[i][j][k][AA][1][1] = -tmp2 * fjac[i][j - 1][k][1][1] -
-                                 tmp1 * njac[i][j - 1][k][1][1] - tmp1 * dy2;
-        lhs[i][j][k][AA][1][2] =
-            -tmp2 * fjac[i][j - 1][k][1][2] - tmp1 * njac[i][j - 1][k][1][2];
-        lhs[i][j][k][AA][1][3] =
-            -tmp2 * fjac[i][j - 1][k][1][3] - tmp1 * njac[i][j - 1][k][1][3];
-        lhs[i][j][k][AA][1][4] =
-            -tmp2 * fjac[i][j - 1][k][1][4] - tmp1 * njac[i][j - 1][k][1][4];
+            lhs[i][j][k][AA][1][0] = -tmp2 * fjac[i][j - 1][k][1][0] -
+                                     tmp1 * njac[i][j - 1][k][1][0];
+            lhs[i][j][k][AA][1][1] = -tmp2 * fjac[i][j - 1][k][1][1] -
+                                     tmp1 * njac[i][j - 1][k][1][1] -
+                                     tmp1 * dy2;
+            lhs[i][j][k][AA][1][2] = -tmp2 * fjac[i][j - 1][k][1][2] -
+                                     tmp1 * njac[i][j - 1][k][1][2];
+            lhs[i][j][k][AA][1][3] = -tmp2 * fjac[i][j - 1][k][1][3] -
+                                     tmp1 * njac[i][j - 1][k][1][3];
+            lhs[i][j][k][AA][1][4] = -tmp2 * fjac[i][j - 1][k][1][4] -
+                                     tmp1 * njac[i][j - 1][k][1][4];
 
-        lhs[i][j][k][AA][2][0] =
-            -tmp2 * fjac[i][j - 1][k][2][0] - tmp1 * njac[i][j - 1][k][2][0];
-        lhs[i][j][k][AA][2][1] =
-            -tmp2 * fjac[i][j - 1][k][2][1] - tmp1 * njac[i][j - 1][k][2][1];
-        lhs[i][j][k][AA][2][2] = -tmp2 * fjac[i][j - 1][k][2][2] -
-                                 tmp1 * njac[i][j - 1][k][2][2] - tmp1 * dy3;
-        lhs[i][j][k][AA][2][3] =
-            -tmp2 * fjac[i][j - 1][k][2][3] - tmp1 * njac[i][j - 1][k][2][3];
-        lhs[i][j][k][AA][2][4] =
-            -tmp2 * fjac[i][j - 1][k][2][4] - tmp1 * njac[i][j - 1][k][2][4];
+            lhs[i][j][k][AA][2][0] = -tmp2 * fjac[i][j - 1][k][2][0] -
+                                     tmp1 * njac[i][j - 1][k][2][0];
+            lhs[i][j][k][AA][2][1] = -tmp2 * fjac[i][j - 1][k][2][1] -
+                                     tmp1 * njac[i][j - 1][k][2][1];
+            lhs[i][j][k][AA][2][2] = -tmp2 * fjac[i][j - 1][k][2][2] -
+                                     tmp1 * njac[i][j - 1][k][2][2] -
+                                     tmp1 * dy3;
+            lhs[i][j][k][AA][2][3] = -tmp2 * fjac[i][j - 1][k][2][3] -
+                                     tmp1 * njac[i][j - 1][k][2][3];
+            lhs[i][j][k][AA][2][4] = -tmp2 * fjac[i][j - 1][k][2][4] -
+                                     tmp1 * njac[i][j - 1][k][2][4];
 
-        lhs[i][j][k][AA][3][0] =
-            -tmp2 * fjac[i][j - 1][k][3][0] - tmp1 * njac[i][j - 1][k][3][0];
-        lhs[i][j][k][AA][3][1] =
-            -tmp2 * fjac[i][j - 1][k][3][1] - tmp1 * njac[i][j - 1][k][3][1];
-        lhs[i][j][k][AA][3][2] =
-            -tmp2 * fjac[i][j - 1][k][3][2] - tmp1 * njac[i][j - 1][k][3][2];
-        lhs[i][j][k][AA][3][3] = -tmp2 * fjac[i][j - 1][k][3][3] -
-                                 tmp1 * njac[i][j - 1][k][3][3] - tmp1 * dy4;
-        lhs[i][j][k][AA][3][4] =
-            -tmp2 * fjac[i][j - 1][k][3][4] - tmp1 * njac[i][j - 1][k][3][4];
+            lhs[i][j][k][AA][3][0] = -tmp2 * fjac[i][j - 1][k][3][0] -
+                                     tmp1 * njac[i][j - 1][k][3][0];
+            lhs[i][j][k][AA][3][1] = -tmp2 * fjac[i][j - 1][k][3][1] -
+                                     tmp1 * njac[i][j - 1][k][3][1];
+            lhs[i][j][k][AA][3][2] = -tmp2 * fjac[i][j - 1][k][3][2] -
+                                     tmp1 * njac[i][j - 1][k][3][2];
+            lhs[i][j][k][AA][3][3] = -tmp2 * fjac[i][j - 1][k][3][3] -
+                                     tmp1 * njac[i][j - 1][k][3][3] -
+                                     tmp1 * dy4;
+            lhs[i][j][k][AA][3][4] = -tmp2 * fjac[i][j - 1][k][3][4] -
+                                     tmp1 * njac[i][j - 1][k][3][4];
 
-        lhs[i][j][k][AA][4][0] =
-            -tmp2 * fjac[i][j - 1][k][4][0] - tmp1 * njac[i][j - 1][k][4][0];
-        lhs[i][j][k][AA][4][1] =
-            -tmp2 * fjac[i][j - 1][k][4][1] - tmp1 * njac[i][j - 1][k][4][1];
-        lhs[i][j][k][AA][4][2] =
-            -tmp2 * fjac[i][j - 1][k][4][2] - tmp1 * njac[i][j - 1][k][4][2];
-        lhs[i][j][k][AA][4][3] =
-            -tmp2 * fjac[i][j - 1][k][4][3] - tmp1 * njac[i][j - 1][k][4][3];
-        lhs[i][j][k][AA][4][4] = -tmp2 * fjac[i][j - 1][k][4][4] -
-                                 tmp1 * njac[i][j - 1][k][4][4] - tmp1 * dy5;
+            lhs[i][j][k][AA][4][0] = -tmp2 * fjac[i][j - 1][k][4][0] -
+                                     tmp1 * njac[i][j - 1][k][4][0];
+            lhs[i][j][k][AA][4][1] = -tmp2 * fjac[i][j - 1][k][4][1] -
+                                     tmp1 * njac[i][j - 1][k][4][1];
+            lhs[i][j][k][AA][4][2] = -tmp2 * fjac[i][j - 1][k][4][2] -
+                                     tmp1 * njac[i][j - 1][k][4][2];
+            lhs[i][j][k][AA][4][3] = -tmp2 * fjac[i][j - 1][k][4][3] -
+                                     tmp1 * njac[i][j - 1][k][4][3];
+            lhs[i][j][k][AA][4][4] = -tmp2 * fjac[i][j - 1][k][4][4] -
+                                     tmp1 * njac[i][j - 1][k][4][4] -
+                                     tmp1 * dy5;
 
-        lhs[i][j][k][BB][0][0] =
-            1.0 + tmp1 * 2.0 * njac[i][j][k][0][0] + tmp1 * 2.0 * dy1;
-        lhs[i][j][k][BB][0][1] = tmp1 * 2.0 * njac[i][j][k][0][1];
-        lhs[i][j][k][BB][0][2] = tmp1 * 2.0 * njac[i][j][k][0][2];
-        lhs[i][j][k][BB][0][3] = tmp1 * 2.0 * njac[i][j][k][0][3];
-        lhs[i][j][k][BB][0][4] = tmp1 * 2.0 * njac[i][j][k][0][4];
+            lhs[i][j][k][BB][0][0] =
+                1.0 + tmp1 * 2.0 * njac[i][j][k][0][0] + tmp1 * 2.0 * dy1;
+            lhs[i][j][k][BB][0][1] = tmp1 * 2.0 * njac[i][j][k][0][1];
+            lhs[i][j][k][BB][0][2] = tmp1 * 2.0 * njac[i][j][k][0][2];
+            lhs[i][j][k][BB][0][3] = tmp1 * 2.0 * njac[i][j][k][0][3];
+            lhs[i][j][k][BB][0][4] = tmp1 * 2.0 * njac[i][j][k][0][4];
 
-        lhs[i][j][k][BB][1][0] = tmp1 * 2.0 * njac[i][j][k][1][0];
-        lhs[i][j][k][BB][1][1] =
-            1.0 + tmp1 * 2.0 * njac[i][j][k][1][1] + tmp1 * 2.0 * dy2;
-        lhs[i][j][k][BB][1][2] = tmp1 * 2.0 * njac[i][j][k][1][2];
-        lhs[i][j][k][BB][1][3] = tmp1 * 2.0 * njac[i][j][k][1][3];
-        lhs[i][j][k][BB][1][4] = tmp1 * 2.0 * njac[i][j][k][1][4];
+            lhs[i][j][k][BB][1][0] = tmp1 * 2.0 * njac[i][j][k][1][0];
+            lhs[i][j][k][BB][1][1] =
+                1.0 + tmp1 * 2.0 * njac[i][j][k][1][1] + tmp1 * 2.0 * dy2;
+            lhs[i][j][k][BB][1][2] = tmp1 * 2.0 * njac[i][j][k][1][2];
+            lhs[i][j][k][BB][1][3] = tmp1 * 2.0 * njac[i][j][k][1][3];
+            lhs[i][j][k][BB][1][4] = tmp1 * 2.0 * njac[i][j][k][1][4];
 
-        lhs[i][j][k][BB][2][0] = tmp1 * 2.0 * njac[i][j][k][2][0];
-        lhs[i][j][k][BB][2][1] = tmp1 * 2.0 * njac[i][j][k][2][1];
-        lhs[i][j][k][BB][2][2] =
-            1.0 + tmp1 * 2.0 * njac[i][j][k][2][2] + tmp1 * 2.0 * dy3;
-        lhs[i][j][k][BB][2][3] = tmp1 * 2.0 * njac[i][j][k][2][3];
-        lhs[i][j][k][BB][2][4] = tmp1 * 2.0 * njac[i][j][k][2][4];
+            lhs[i][j][k][BB][2][0] = tmp1 * 2.0 * njac[i][j][k][2][0];
+            lhs[i][j][k][BB][2][1] = tmp1 * 2.0 * njac[i][j][k][2][1];
+            lhs[i][j][k][BB][2][2] =
+                1.0 + tmp1 * 2.0 * njac[i][j][k][2][2] + tmp1 * 2.0 * dy3;
+            lhs[i][j][k][BB][2][3] = tmp1 * 2.0 * njac[i][j][k][2][3];
+            lhs[i][j][k][BB][2][4] = tmp1 * 2.0 * njac[i][j][k][2][4];
 
-        lhs[i][j][k][BB][3][0] = tmp1 * 2.0 * njac[i][j][k][3][0];
-        lhs[i][j][k][BB][3][1] = tmp1 * 2.0 * njac[i][j][k][3][1];
-        lhs[i][j][k][BB][3][2] = tmp1 * 2.0 * njac[i][j][k][3][2];
-        lhs[i][j][k][BB][3][3] =
-            1.0 + tmp1 * 2.0 * njac[i][j][k][3][3] + tmp1 * 2.0 * dy4;
-        lhs[i][j][k][BB][3][4] = tmp1 * 2.0 * njac[i][j][k][3][4];
+            lhs[i][j][k][BB][3][0] = tmp1 * 2.0 * njac[i][j][k][3][0];
+            lhs[i][j][k][BB][3][1] = tmp1 * 2.0 * njac[i][j][k][3][1];
+            lhs[i][j][k][BB][3][2] = tmp1 * 2.0 * njac[i][j][k][3][2];
+            lhs[i][j][k][BB][3][3] =
+                1.0 + tmp1 * 2.0 * njac[i][j][k][3][3] + tmp1 * 2.0 * dy4;
+            lhs[i][j][k][BB][3][4] = tmp1 * 2.0 * njac[i][j][k][3][4];
 
-        lhs[i][j][k][BB][4][0] = tmp1 * 2.0 * njac[i][j][k][4][0];
-        lhs[i][j][k][BB][4][1] = tmp1 * 2.0 * njac[i][j][k][4][1];
-        lhs[i][j][k][BB][4][2] = tmp1 * 2.0 * njac[i][j][k][4][2];
-        lhs[i][j][k][BB][4][3] = tmp1 * 2.0 * njac[i][j][k][4][3];
-        lhs[i][j][k][BB][4][4] =
-            1.0 + tmp1 * 2.0 * njac[i][j][k][4][4] + tmp1 * 2.0 * dy5;
+            lhs[i][j][k][BB][4][0] = tmp1 * 2.0 * njac[i][j][k][4][0];
+            lhs[i][j][k][BB][4][1] = tmp1 * 2.0 * njac[i][j][k][4][1];
+            lhs[i][j][k][BB][4][2] = tmp1 * 2.0 * njac[i][j][k][4][2];
+            lhs[i][j][k][BB][4][3] = tmp1 * 2.0 * njac[i][j][k][4][3];
+            lhs[i][j][k][BB][4][4] =
+                1.0 + tmp1 * 2.0 * njac[i][j][k][4][4] + tmp1 * 2.0 * dy5;
 
-        lhs[i][j][k][CC][0][0] = tmp2 * fjac[i][j + 1][k][0][0] -
-                                 tmp1 * njac[i][j + 1][k][0][0] - tmp1 * dy1;
-        lhs[i][j][k][CC][0][1] =
-            tmp2 * fjac[i][j + 1][k][0][1] - tmp1 * njac[i][j + 1][k][0][1];
-        lhs[i][j][k][CC][0][2] =
-            tmp2 * fjac[i][j + 1][k][0][2] - tmp1 * njac[i][j + 1][k][0][2];
-        lhs[i][j][k][CC][0][3] =
-            tmp2 * fjac[i][j + 1][k][0][3] - tmp1 * njac[i][j + 1][k][0][3];
-        lhs[i][j][k][CC][0][4] =
-            tmp2 * fjac[i][j + 1][k][0][4] - tmp1 * njac[i][j + 1][k][0][4];
+            lhs[i][j][k][CC][0][0] = tmp2 * fjac[i][j + 1][k][0][0] -
+                                     tmp1 * njac[i][j + 1][k][0][0] -
+                                     tmp1 * dy1;
+            lhs[i][j][k][CC][0][1] =
+                tmp2 * fjac[i][j + 1][k][0][1] - tmp1 * njac[i][j + 1][k][0][1];
+            lhs[i][j][k][CC][0][2] =
+                tmp2 * fjac[i][j + 1][k][0][2] - tmp1 * njac[i][j + 1][k][0][2];
+            lhs[i][j][k][CC][0][3] =
+                tmp2 * fjac[i][j + 1][k][0][3] - tmp1 * njac[i][j + 1][k][0][3];
+            lhs[i][j][k][CC][0][4] =
+                tmp2 * fjac[i][j + 1][k][0][4] - tmp1 * njac[i][j + 1][k][0][4];
 
-        lhs[i][j][k][CC][1][0] =
-            tmp2 * fjac[i][j + 1][k][1][0] - tmp1 * njac[i][j + 1][k][1][0];
-        lhs[i][j][k][CC][1][1] = tmp2 * fjac[i][j + 1][k][1][1] -
-                                 tmp1 * njac[i][j + 1][k][1][1] - tmp1 * dy2;
-        lhs[i][j][k][CC][1][2] =
-            tmp2 * fjac[i][j + 1][k][1][2] - tmp1 * njac[i][j + 1][k][1][2];
-        lhs[i][j][k][CC][1][3] =
-            tmp2 * fjac[i][j + 1][k][1][3] - tmp1 * njac[i][j + 1][k][1][3];
-        lhs[i][j][k][CC][1][4] =
-            tmp2 * fjac[i][j + 1][k][1][4] - tmp1 * njac[i][j + 1][k][1][4];
+            lhs[i][j][k][CC][1][0] =
+                tmp2 * fjac[i][j + 1][k][1][0] - tmp1 * njac[i][j + 1][k][1][0];
+            lhs[i][j][k][CC][1][1] = tmp2 * fjac[i][j + 1][k][1][1] -
+                                     tmp1 * njac[i][j + 1][k][1][1] -
+                                     tmp1 * dy2;
+            lhs[i][j][k][CC][1][2] =
+                tmp2 * fjac[i][j + 1][k][1][2] - tmp1 * njac[i][j + 1][k][1][2];
+            lhs[i][j][k][CC][1][3] =
+                tmp2 * fjac[i][j + 1][k][1][3] - tmp1 * njac[i][j + 1][k][1][3];
+            lhs[i][j][k][CC][1][4] =
+                tmp2 * fjac[i][j + 1][k][1][4] - tmp1 * njac[i][j + 1][k][1][4];
 
-        lhs[i][j][k][CC][2][0] =
-            tmp2 * fjac[i][j + 1][k][2][0] - tmp1 * njac[i][j + 1][k][2][0];
-        lhs[i][j][k][CC][2][1] =
-            tmp2 * fjac[i][j + 1][k][2][1] - tmp1 * njac[i][j + 1][k][2][1];
-        lhs[i][j][k][CC][2][2] = tmp2 * fjac[i][j + 1][k][2][2] -
-                                 tmp1 * njac[i][j + 1][k][2][2] - tmp1 * dy3;
-        lhs[i][j][k][CC][2][3] =
-            tmp2 * fjac[i][j + 1][k][2][3] - tmp1 * njac[i][j + 1][k][2][3];
-        lhs[i][j][k][CC][2][4] =
-            tmp2 * fjac[i][j + 1][k][2][4] - tmp1 * njac[i][j + 1][k][2][4];
+            lhs[i][j][k][CC][2][0] =
+                tmp2 * fjac[i][j + 1][k][2][0] - tmp1 * njac[i][j + 1][k][2][0];
+            lhs[i][j][k][CC][2][1] =
+                tmp2 * fjac[i][j + 1][k][2][1] - tmp1 * njac[i][j + 1][k][2][1];
+            lhs[i][j][k][CC][2][2] = tmp2 * fjac[i][j + 1][k][2][2] -
+                                     tmp1 * njac[i][j + 1][k][2][2] -
+                                     tmp1 * dy3;
+            lhs[i][j][k][CC][2][3] =
+                tmp2 * fjac[i][j + 1][k][2][3] - tmp1 * njac[i][j + 1][k][2][3];
+            lhs[i][j][k][CC][2][4] =
+                tmp2 * fjac[i][j + 1][k][2][4] - tmp1 * njac[i][j + 1][k][2][4];
 
-        lhs[i][j][k][CC][3][0] =
-            tmp2 * fjac[i][j + 1][k][3][0] - tmp1 * njac[i][j + 1][k][3][0];
-        lhs[i][j][k][CC][3][1] =
-            tmp2 * fjac[i][j + 1][k][3][1] - tmp1 * njac[i][j + 1][k][3][1];
-        lhs[i][j][k][CC][3][2] =
-            tmp2 * fjac[i][j + 1][k][3][2] - tmp1 * njac[i][j + 1][k][3][2];
-        lhs[i][j][k][CC][3][3] = tmp2 * fjac[i][j + 1][k][3][3] -
-                                 tmp1 * njac[i][j + 1][k][3][3] - tmp1 * dy4;
-        lhs[i][j][k][CC][3][4] =
-            tmp2 * fjac[i][j + 1][k][3][4] - tmp1 * njac[i][j + 1][k][3][4];
+            lhs[i][j][k][CC][3][0] =
+                tmp2 * fjac[i][j + 1][k][3][0] - tmp1 * njac[i][j + 1][k][3][0];
+            lhs[i][j][k][CC][3][1] =
+                tmp2 * fjac[i][j + 1][k][3][1] - tmp1 * njac[i][j + 1][k][3][1];
+            lhs[i][j][k][CC][3][2] =
+                tmp2 * fjac[i][j + 1][k][3][2] - tmp1 * njac[i][j + 1][k][3][2];
+            lhs[i][j][k][CC][3][3] = tmp2 * fjac[i][j + 1][k][3][3] -
+                                     tmp1 * njac[i][j + 1][k][3][3] -
+                                     tmp1 * dy4;
+            lhs[i][j][k][CC][3][4] =
+                tmp2 * fjac[i][j + 1][k][3][4] - tmp1 * njac[i][j + 1][k][3][4];
 
-        lhs[i][j][k][CC][4][0] =
-            tmp2 * fjac[i][j + 1][k][4][0] - tmp1 * njac[i][j + 1][k][4][0];
-        lhs[i][j][k][CC][4][1] =
-            tmp2 * fjac[i][j + 1][k][4][1] - tmp1 * njac[i][j + 1][k][4][1];
-        lhs[i][j][k][CC][4][2] =
-            tmp2 * fjac[i][j + 1][k][4][2] - tmp1 * njac[i][j + 1][k][4][2];
-        lhs[i][j][k][CC][4][3] =
-            tmp2 * fjac[i][j + 1][k][4][3] - tmp1 * njac[i][j + 1][k][4][3];
-        lhs[i][j][k][CC][4][4] = tmp2 * fjac[i][j + 1][k][4][4] -
-                                 tmp1 * njac[i][j + 1][k][4][4] - tmp1 * dy5;
-      });
+            lhs[i][j][k][CC][4][0] =
+                tmp2 * fjac[i][j + 1][k][4][0] - tmp1 * njac[i][j + 1][k][4][0];
+            lhs[i][j][k][CC][4][1] =
+                tmp2 * fjac[i][j + 1][k][4][1] - tmp1 * njac[i][j + 1][k][4][1];
+            lhs[i][j][k][CC][4][2] =
+                tmp2 * fjac[i][j + 1][k][4][2] - tmp1 * njac[i][j + 1][k][4][2];
+            lhs[i][j][k][CC][4][3] =
+                tmp2 * fjac[i][j + 1][k][4][3] - tmp1 * njac[i][j + 1][k][4][3];
+            lhs[i][j][k][CC][4][4] = tmp2 * fjac[i][j + 1][k][4][4] -
+                                     tmp1 * njac[i][j + 1][k][4][4] -
+                                     tmp1 * dy5;
+          });
     });
   });
 }
@@ -1419,257 +1421,267 @@ void lhsz(void) {
   c     determine c (labeled f) and s jacobians
   c---------------------------------------------------------------------*/
 
-  auto irange = view::ints(1, grid_points[0] - 1);
-  auto jrange = view::ints(1, grid_points[1] - 1);
-  auto krange = view::ints(0, grid_points[2]);
-  NS::for_each(PARALLEL,irange.begin(), irange.end(), [&](auto i) -> void {
-    NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-      NS::for_each(PARALLELUNSEQ,krange.begin(), krange.end(), [&](auto k) -> void {
-        double tmp1 = 1.0 / u[i][j][k][0];
-        double tmp2 = tmp1 * tmp1;
-        double tmp3 = tmp1 * tmp2;
+  MAKE_RANGE(1, grid_points[0] - 1, irange);
+  MAKE_RANGE(1, grid_points[1] - 1, jrange);
+  MAKE_RANGE(0, grid_points[2], krange);
+  NS::for_each(PARALLEL, irange.begin(), irange.end(), [&](auto i) -> void {
+    NS::for_each(NESTPAR, jrange.begin(), jrange.end(), [&](auto j) -> void {
+      NS::for_each(
+          NESTPARUNSEQ, krange.begin(), krange.end(), [&](auto k) -> void {
+            double tmp1 = 1.0 / u[i][j][k][0];
+            double tmp2 = tmp1 * tmp1;
+            double tmp3 = tmp1 * tmp2;
 
-        fjac[i][j][k][0][0] = 0.0;
-        fjac[i][j][k][0][1] = 0.0;
-        fjac[i][j][k][0][2] = 0.0;
-        fjac[i][j][k][0][3] = 1.0;
-        fjac[i][j][k][0][4] = 0.0;
+            fjac[i][j][k][0][0] = 0.0;
+            fjac[i][j][k][0][1] = 0.0;
+            fjac[i][j][k][0][2] = 0.0;
+            fjac[i][j][k][0][3] = 1.0;
+            fjac[i][j][k][0][4] = 0.0;
 
-        fjac[i][j][k][1][0] = -(u[i][j][k][1] * u[i][j][k][3]) * tmp2;
-        fjac[i][j][k][1][1] = u[i][j][k][3] * tmp1;
-        fjac[i][j][k][1][2] = 0.0;
-        fjac[i][j][k][1][3] = u[i][j][k][1] * tmp1;
-        fjac[i][j][k][1][4] = 0.0;
+            fjac[i][j][k][1][0] = -(u[i][j][k][1] * u[i][j][k][3]) * tmp2;
+            fjac[i][j][k][1][1] = u[i][j][k][3] * tmp1;
+            fjac[i][j][k][1][2] = 0.0;
+            fjac[i][j][k][1][3] = u[i][j][k][1] * tmp1;
+            fjac[i][j][k][1][4] = 0.0;
 
-        fjac[i][j][k][2][0] = -(u[i][j][k][2] * u[i][j][k][3]) * tmp2;
-        fjac[i][j][k][2][1] = 0.0;
-        fjac[i][j][k][2][2] = u[i][j][k][3] * tmp1;
-        fjac[i][j][k][2][3] = u[i][j][k][2] * tmp1;
-        fjac[i][j][k][2][4] = 0.0;
+            fjac[i][j][k][2][0] = -(u[i][j][k][2] * u[i][j][k][3]) * tmp2;
+            fjac[i][j][k][2][1] = 0.0;
+            fjac[i][j][k][2][2] = u[i][j][k][3] * tmp1;
+            fjac[i][j][k][2][3] = u[i][j][k][2] * tmp1;
+            fjac[i][j][k][2][4] = 0.0;
 
-        fjac[i][j][k][3][0] = -(u[i][j][k][3] * u[i][j][k][3] * tmp2) +
-                              0.50 * c2 *
-                                  ((u[i][j][k][1] * u[i][j][k][1] +
-                                    u[i][j][k][2] * u[i][j][k][2] +
-                                    u[i][j][k][3] * u[i][j][k][3]) *
-                                   tmp2);
-        fjac[i][j][k][3][1] = -c2 * u[i][j][k][1] * tmp1;
-        fjac[i][j][k][3][2] = -c2 * u[i][j][k][2] * tmp1;
-        fjac[i][j][k][3][3] = (2.0 - c2) * u[i][j][k][3] * tmp1;
-        fjac[i][j][k][3][4] = c2;
+            fjac[i][j][k][3][0] = -(u[i][j][k][3] * u[i][j][k][3] * tmp2) +
+                                  0.50 * c2 *
+                                      ((u[i][j][k][1] * u[i][j][k][1] +
+                                        u[i][j][k][2] * u[i][j][k][2] +
+                                        u[i][j][k][3] * u[i][j][k][3]) *
+                                       tmp2);
+            fjac[i][j][k][3][1] = -c2 * u[i][j][k][1] * tmp1;
+            fjac[i][j][k][3][2] = -c2 * u[i][j][k][2] * tmp1;
+            fjac[i][j][k][3][3] = (2.0 - c2) * u[i][j][k][3] * tmp1;
+            fjac[i][j][k][3][4] = c2;
 
-        fjac[i][j][k][4][0] = (c2 *
-                                   (u[i][j][k][1] * u[i][j][k][1] +
-                                    u[i][j][k][2] * u[i][j][k][2] +
-                                    u[i][j][k][3] * u[i][j][k][3]) *
-                                   tmp2 -
-                               c1 * (u[i][j][k][4] * tmp1)) *
-                              (u[i][j][k][3] * tmp1);
-        fjac[i][j][k][4][1] = -c2 * (u[i][j][k][1] * u[i][j][k][3]) * tmp2;
-        fjac[i][j][k][4][2] = -c2 * (u[i][j][k][2] * u[i][j][k][3]) * tmp2;
-        fjac[i][j][k][4][3] = c1 * (u[i][j][k][4] * tmp1) -
-                              0.50 * c2 *
-                                  ((u[i][j][k][1] * u[i][j][k][1] +
-                                    u[i][j][k][2] * u[i][j][k][2] +
-                                    3.0 * u[i][j][k][3] * u[i][j][k][3]) *
-                                   tmp2);
-        fjac[i][j][k][4][4] = c1 * u[i][j][k][3] * tmp1;
+            fjac[i][j][k][4][0] = (c2 *
+                                       (u[i][j][k][1] * u[i][j][k][1] +
+                                        u[i][j][k][2] * u[i][j][k][2] +
+                                        u[i][j][k][3] * u[i][j][k][3]) *
+                                       tmp2 -
+                                   c1 * (u[i][j][k][4] * tmp1)) *
+                                  (u[i][j][k][3] * tmp1);
+            fjac[i][j][k][4][1] = -c2 * (u[i][j][k][1] * u[i][j][k][3]) * tmp2;
+            fjac[i][j][k][4][2] = -c2 * (u[i][j][k][2] * u[i][j][k][3]) * tmp2;
+            fjac[i][j][k][4][3] = c1 * (u[i][j][k][4] * tmp1) -
+                                  0.50 * c2 *
+                                      ((u[i][j][k][1] * u[i][j][k][1] +
+                                        u[i][j][k][2] * u[i][j][k][2] +
+                                        3.0 * u[i][j][k][3] * u[i][j][k][3]) *
+                                       tmp2);
+            fjac[i][j][k][4][4] = c1 * u[i][j][k][3] * tmp1;
 
-        njac[i][j][k][0][0] = 0.0;
-        njac[i][j][k][0][1] = 0.0;
-        njac[i][j][k][0][2] = 0.0;
-        njac[i][j][k][0][3] = 0.0;
-        njac[i][j][k][0][4] = 0.0;
+            njac[i][j][k][0][0] = 0.0;
+            njac[i][j][k][0][1] = 0.0;
+            njac[i][j][k][0][2] = 0.0;
+            njac[i][j][k][0][3] = 0.0;
+            njac[i][j][k][0][4] = 0.0;
 
-        njac[i][j][k][1][0] = -c3c4 * tmp2 * u[i][j][k][1];
-        njac[i][j][k][1][1] = c3c4 * tmp1;
-        njac[i][j][k][1][2] = 0.0;
-        njac[i][j][k][1][3] = 0.0;
-        njac[i][j][k][1][4] = 0.0;
+            njac[i][j][k][1][0] = -c3c4 * tmp2 * u[i][j][k][1];
+            njac[i][j][k][1][1] = c3c4 * tmp1;
+            njac[i][j][k][1][2] = 0.0;
+            njac[i][j][k][1][3] = 0.0;
+            njac[i][j][k][1][4] = 0.0;
 
-        njac[i][j][k][2][0] = -c3c4 * tmp2 * u[i][j][k][2];
-        njac[i][j][k][2][1] = 0.0;
-        njac[i][j][k][2][2] = c3c4 * tmp1;
-        njac[i][j][k][2][3] = 0.0;
-        njac[i][j][k][2][4] = 0.0;
+            njac[i][j][k][2][0] = -c3c4 * tmp2 * u[i][j][k][2];
+            njac[i][j][k][2][1] = 0.0;
+            njac[i][j][k][2][2] = c3c4 * tmp1;
+            njac[i][j][k][2][3] = 0.0;
+            njac[i][j][k][2][4] = 0.0;
 
-        njac[i][j][k][3][0] = -con43 * c3c4 * tmp2 * u[i][j][k][3];
-        njac[i][j][k][3][1] = 0.0;
-        njac[i][j][k][3][2] = 0.0;
-        njac[i][j][k][3][3] = con43 * c3 * c4 * tmp1;
-        njac[i][j][k][3][4] = 0.0;
+            njac[i][j][k][3][0] = -con43 * c3c4 * tmp2 * u[i][j][k][3];
+            njac[i][j][k][3][1] = 0.0;
+            njac[i][j][k][3][2] = 0.0;
+            njac[i][j][k][3][3] = con43 * c3 * c4 * tmp1;
+            njac[i][j][k][3][4] = 0.0;
 
-        njac[i][j][k][4][0] =
-            -(c3c4 - c1345) * tmp3 * (pow2(u[i][j][k][1])) -
-            (c3c4 - c1345) * tmp3 * (pow2(u[i][j][k][2])) -
-            (con43 * c3c4 - c1345) * tmp3 * (pow2(u[i][j][k][3])) -
-            c1345 * tmp2 * u[i][j][k][4];
+            njac[i][j][k][4][0] =
+                -(c3c4 - c1345) * tmp3 * (pow2(u[i][j][k][1])) -
+                (c3c4 - c1345) * tmp3 * (pow2(u[i][j][k][2])) -
+                (con43 * c3c4 - c1345) * tmp3 * (pow2(u[i][j][k][3])) -
+                c1345 * tmp2 * u[i][j][k][4];
 
-        njac[i][j][k][4][1] = (c3c4 - c1345) * tmp2 * u[i][j][k][1];
-        njac[i][j][k][4][2] = (c3c4 - c1345) * tmp2 * u[i][j][k][2];
-        njac[i][j][k][4][3] = (con43 * c3c4 - c1345) * tmp2 * u[i][j][k][3];
-        njac[i][j][k][4][4] = (c1345)*tmp1;
-      });
+            njac[i][j][k][4][1] = (c3c4 - c1345) * tmp2 * u[i][j][k][1];
+            njac[i][j][k][4][2] = (c3c4 - c1345) * tmp2 * u[i][j][k][2];
+            njac[i][j][k][4][3] = (con43 * c3c4 - c1345) * tmp2 * u[i][j][k][3];
+            njac[i][j][k][4][4] = (c1345)*tmp1;
+          });
     });
   });
 
   /*--------------------------------------------------------------------
   c     now jacobians set, so form left hand side in z direction
   c-------------------------------------------------------------------*/
-  irange = view::ints(1, grid_points[0] - 1);
-  jrange = view::ints(1, grid_points[1] - 1);
-  krange = view::ints(1, grid_points[2] - 1);
-  NS::for_each(PARALLEL,irange.begin(), irange.end(), [&](auto i) -> void {
-    NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-      NS::for_each(PARALLELUNSEQ,krange.begin(), krange.end(), [&](auto k) -> void {
-        double tmp1 = dt * tz1;
-        double tmp2 = dt * tz2;
+  MAKE_RANGE_UNDEF(1, grid_points[2] - 1, krange);
+  NS::for_each(PARALLEL, irange.begin(), irange.end(), [&](auto i) -> void {
+    NS::for_each(NESTPAR, jrange.begin(), jrange.end(), [&](auto j) -> void {
+      NS::for_each(
+          NESTPARUNSEQ, krange.begin(), krange.end(), [&](auto k) -> void {
+            double tmp1 = dt * tz1;
+            double tmp2 = dt * tz2;
 
-        lhs[i][j][k][AA][0][0] = -tmp2 * fjac[i][j][k - 1][0][0] -
-                                 tmp1 * njac[i][j][k - 1][0][0] - tmp1 * dz1;
-        lhs[i][j][k][AA][0][1] =
-            -tmp2 * fjac[i][j][k - 1][0][1] - tmp1 * njac[i][j][k - 1][0][1];
-        lhs[i][j][k][AA][0][2] =
-            -tmp2 * fjac[i][j][k - 1][0][2] - tmp1 * njac[i][j][k - 1][0][2];
-        lhs[i][j][k][AA][0][3] =
-            -tmp2 * fjac[i][j][k - 1][0][3] - tmp1 * njac[i][j][k - 1][0][3];
-        lhs[i][j][k][AA][0][4] =
-            -tmp2 * fjac[i][j][k - 1][0][4] - tmp1 * njac[i][j][k - 1][0][4];
+            lhs[i][j][k][AA][0][0] = -tmp2 * fjac[i][j][k - 1][0][0] -
+                                     tmp1 * njac[i][j][k - 1][0][0] -
+                                     tmp1 * dz1;
+            lhs[i][j][k][AA][0][1] = -tmp2 * fjac[i][j][k - 1][0][1] -
+                                     tmp1 * njac[i][j][k - 1][0][1];
+            lhs[i][j][k][AA][0][2] = -tmp2 * fjac[i][j][k - 1][0][2] -
+                                     tmp1 * njac[i][j][k - 1][0][2];
+            lhs[i][j][k][AA][0][3] = -tmp2 * fjac[i][j][k - 1][0][3] -
+                                     tmp1 * njac[i][j][k - 1][0][3];
+            lhs[i][j][k][AA][0][4] = -tmp2 * fjac[i][j][k - 1][0][4] -
+                                     tmp1 * njac[i][j][k - 1][0][4];
 
-        lhs[i][j][k][AA][1][0] =
-            -tmp2 * fjac[i][j][k - 1][1][0] - tmp1 * njac[i][j][k - 1][1][0];
-        lhs[i][j][k][AA][1][1] = -tmp2 * fjac[i][j][k - 1][1][1] -
-                                 tmp1 * njac[i][j][k - 1][1][1] - tmp1 * dz2;
-        lhs[i][j][k][AA][1][2] =
-            -tmp2 * fjac[i][j][k - 1][1][2] - tmp1 * njac[i][j][k - 1][1][2];
-        lhs[i][j][k][AA][1][3] =
-            -tmp2 * fjac[i][j][k - 1][1][3] - tmp1 * njac[i][j][k - 1][1][3];
-        lhs[i][j][k][AA][1][4] =
-            -tmp2 * fjac[i][j][k - 1][1][4] - tmp1 * njac[i][j][k - 1][1][4];
+            lhs[i][j][k][AA][1][0] = -tmp2 * fjac[i][j][k - 1][1][0] -
+                                     tmp1 * njac[i][j][k - 1][1][0];
+            lhs[i][j][k][AA][1][1] = -tmp2 * fjac[i][j][k - 1][1][1] -
+                                     tmp1 * njac[i][j][k - 1][1][1] -
+                                     tmp1 * dz2;
+            lhs[i][j][k][AA][1][2] = -tmp2 * fjac[i][j][k - 1][1][2] -
+                                     tmp1 * njac[i][j][k - 1][1][2];
+            lhs[i][j][k][AA][1][3] = -tmp2 * fjac[i][j][k - 1][1][3] -
+                                     tmp1 * njac[i][j][k - 1][1][3];
+            lhs[i][j][k][AA][1][4] = -tmp2 * fjac[i][j][k - 1][1][4] -
+                                     tmp1 * njac[i][j][k - 1][1][4];
 
-        lhs[i][j][k][AA][2][0] =
-            -tmp2 * fjac[i][j][k - 1][2][0] - tmp1 * njac[i][j][k - 1][2][0];
-        lhs[i][j][k][AA][2][1] =
-            -tmp2 * fjac[i][j][k - 1][2][1] - tmp1 * njac[i][j][k - 1][2][1];
-        lhs[i][j][k][AA][2][2] = -tmp2 * fjac[i][j][k - 1][2][2] -
-                                 tmp1 * njac[i][j][k - 1][2][2] - tmp1 * dz3;
-        lhs[i][j][k][AA][2][3] =
-            -tmp2 * fjac[i][j][k - 1][2][3] - tmp1 * njac[i][j][k - 1][2][3];
-        lhs[i][j][k][AA][2][4] =
-            -tmp2 * fjac[i][j][k - 1][2][4] - tmp1 * njac[i][j][k - 1][2][4];
+            lhs[i][j][k][AA][2][0] = -tmp2 * fjac[i][j][k - 1][2][0] -
+                                     tmp1 * njac[i][j][k - 1][2][0];
+            lhs[i][j][k][AA][2][1] = -tmp2 * fjac[i][j][k - 1][2][1] -
+                                     tmp1 * njac[i][j][k - 1][2][1];
+            lhs[i][j][k][AA][2][2] = -tmp2 * fjac[i][j][k - 1][2][2] -
+                                     tmp1 * njac[i][j][k - 1][2][2] -
+                                     tmp1 * dz3;
+            lhs[i][j][k][AA][2][3] = -tmp2 * fjac[i][j][k - 1][2][3] -
+                                     tmp1 * njac[i][j][k - 1][2][3];
+            lhs[i][j][k][AA][2][4] = -tmp2 * fjac[i][j][k - 1][2][4] -
+                                     tmp1 * njac[i][j][k - 1][2][4];
 
-        lhs[i][j][k][AA][3][0] =
-            -tmp2 * fjac[i][j][k - 1][3][0] - tmp1 * njac[i][j][k - 1][3][0];
-        lhs[i][j][k][AA][3][1] =
-            -tmp2 * fjac[i][j][k - 1][3][1] - tmp1 * njac[i][j][k - 1][3][1];
-        lhs[i][j][k][AA][3][2] =
-            -tmp2 * fjac[i][j][k - 1][3][2] - tmp1 * njac[i][j][k - 1][3][2];
-        lhs[i][j][k][AA][3][3] = -tmp2 * fjac[i][j][k - 1][3][3] -
-                                 tmp1 * njac[i][j][k - 1][3][3] - tmp1 * dz4;
-        lhs[i][j][k][AA][3][4] =
-            -tmp2 * fjac[i][j][k - 1][3][4] - tmp1 * njac[i][j][k - 1][3][4];
+            lhs[i][j][k][AA][3][0] = -tmp2 * fjac[i][j][k - 1][3][0] -
+                                     tmp1 * njac[i][j][k - 1][3][0];
+            lhs[i][j][k][AA][3][1] = -tmp2 * fjac[i][j][k - 1][3][1] -
+                                     tmp1 * njac[i][j][k - 1][3][1];
+            lhs[i][j][k][AA][3][2] = -tmp2 * fjac[i][j][k - 1][3][2] -
+                                     tmp1 * njac[i][j][k - 1][3][2];
+            lhs[i][j][k][AA][3][3] = -tmp2 * fjac[i][j][k - 1][3][3] -
+                                     tmp1 * njac[i][j][k - 1][3][3] -
+                                     tmp1 * dz4;
+            lhs[i][j][k][AA][3][4] = -tmp2 * fjac[i][j][k - 1][3][4] -
+                                     tmp1 * njac[i][j][k - 1][3][4];
 
-        lhs[i][j][k][AA][4][0] =
-            -tmp2 * fjac[i][j][k - 1][4][0] - tmp1 * njac[i][j][k - 1][4][0];
-        lhs[i][j][k][AA][4][1] =
-            -tmp2 * fjac[i][j][k - 1][4][1] - tmp1 * njac[i][j][k - 1][4][1];
-        lhs[i][j][k][AA][4][2] =
-            -tmp2 * fjac[i][j][k - 1][4][2] - tmp1 * njac[i][j][k - 1][4][2];
-        lhs[i][j][k][AA][4][3] =
-            -tmp2 * fjac[i][j][k - 1][4][3] - tmp1 * njac[i][j][k - 1][4][3];
-        lhs[i][j][k][AA][4][4] = -tmp2 * fjac[i][j][k - 1][4][4] -
-                                 tmp1 * njac[i][j][k - 1][4][4] - tmp1 * dz5;
+            lhs[i][j][k][AA][4][0] = -tmp2 * fjac[i][j][k - 1][4][0] -
+                                     tmp1 * njac[i][j][k - 1][4][0];
+            lhs[i][j][k][AA][4][1] = -tmp2 * fjac[i][j][k - 1][4][1] -
+                                     tmp1 * njac[i][j][k - 1][4][1];
+            lhs[i][j][k][AA][4][2] = -tmp2 * fjac[i][j][k - 1][4][2] -
+                                     tmp1 * njac[i][j][k - 1][4][2];
+            lhs[i][j][k][AA][4][3] = -tmp2 * fjac[i][j][k - 1][4][3] -
+                                     tmp1 * njac[i][j][k - 1][4][3];
+            lhs[i][j][k][AA][4][4] = -tmp2 * fjac[i][j][k - 1][4][4] -
+                                     tmp1 * njac[i][j][k - 1][4][4] -
+                                     tmp1 * dz5;
 
-        lhs[i][j][k][BB][0][0] =
-            1.0 + tmp1 * 2.0 * njac[i][j][k][0][0] + tmp1 * 2.0 * dz1;
-        lhs[i][j][k][BB][0][1] = tmp1 * 2.0 * njac[i][j][k][0][1];
-        lhs[i][j][k][BB][0][2] = tmp1 * 2.0 * njac[i][j][k][0][2];
-        lhs[i][j][k][BB][0][3] = tmp1 * 2.0 * njac[i][j][k][0][3];
-        lhs[i][j][k][BB][0][4] = tmp1 * 2.0 * njac[i][j][k][0][4];
+            lhs[i][j][k][BB][0][0] =
+                1.0 + tmp1 * 2.0 * njac[i][j][k][0][0] + tmp1 * 2.0 * dz1;
+            lhs[i][j][k][BB][0][1] = tmp1 * 2.0 * njac[i][j][k][0][1];
+            lhs[i][j][k][BB][0][2] = tmp1 * 2.0 * njac[i][j][k][0][2];
+            lhs[i][j][k][BB][0][3] = tmp1 * 2.0 * njac[i][j][k][0][3];
+            lhs[i][j][k][BB][0][4] = tmp1 * 2.0 * njac[i][j][k][0][4];
 
-        lhs[i][j][k][BB][1][0] = tmp1 * 2.0 * njac[i][j][k][1][0];
-        lhs[i][j][k][BB][1][1] =
-            1.0 + tmp1 * 2.0 * njac[i][j][k][1][1] + tmp1 * 2.0 * dz2;
-        lhs[i][j][k][BB][1][2] = tmp1 * 2.0 * njac[i][j][k][1][2];
-        lhs[i][j][k][BB][1][3] = tmp1 * 2.0 * njac[i][j][k][1][3];
-        lhs[i][j][k][BB][1][4] = tmp1 * 2.0 * njac[i][j][k][1][4];
+            lhs[i][j][k][BB][1][0] = tmp1 * 2.0 * njac[i][j][k][1][0];
+            lhs[i][j][k][BB][1][1] =
+                1.0 + tmp1 * 2.0 * njac[i][j][k][1][1] + tmp1 * 2.0 * dz2;
+            lhs[i][j][k][BB][1][2] = tmp1 * 2.0 * njac[i][j][k][1][2];
+            lhs[i][j][k][BB][1][3] = tmp1 * 2.0 * njac[i][j][k][1][3];
+            lhs[i][j][k][BB][1][4] = tmp1 * 2.0 * njac[i][j][k][1][4];
 
-        lhs[i][j][k][BB][2][0] = tmp1 * 2.0 * njac[i][j][k][2][0];
-        lhs[i][j][k][BB][2][1] = tmp1 * 2.0 * njac[i][j][k][2][1];
-        lhs[i][j][k][BB][2][2] =
-            1.0 + tmp1 * 2.0 * njac[i][j][k][2][2] + tmp1 * 2.0 * dz3;
-        lhs[i][j][k][BB][2][3] = tmp1 * 2.0 * njac[i][j][k][2][3];
-        lhs[i][j][k][BB][2][4] = tmp1 * 2.0 * njac[i][j][k][2][4];
+            lhs[i][j][k][BB][2][0] = tmp1 * 2.0 * njac[i][j][k][2][0];
+            lhs[i][j][k][BB][2][1] = tmp1 * 2.0 * njac[i][j][k][2][1];
+            lhs[i][j][k][BB][2][2] =
+                1.0 + tmp1 * 2.0 * njac[i][j][k][2][2] + tmp1 * 2.0 * dz3;
+            lhs[i][j][k][BB][2][3] = tmp1 * 2.0 * njac[i][j][k][2][3];
+            lhs[i][j][k][BB][2][4] = tmp1 * 2.0 * njac[i][j][k][2][4];
 
-        lhs[i][j][k][BB][3][0] = tmp1 * 2.0 * njac[i][j][k][3][0];
-        lhs[i][j][k][BB][3][1] = tmp1 * 2.0 * njac[i][j][k][3][1];
-        lhs[i][j][k][BB][3][2] = tmp1 * 2.0 * njac[i][j][k][3][2];
-        lhs[i][j][k][BB][3][3] =
-            1.0 + tmp1 * 2.0 * njac[i][j][k][3][3] + tmp1 * 2.0 * dz4;
-        lhs[i][j][k][BB][3][4] = tmp1 * 2.0 * njac[i][j][k][3][4];
+            lhs[i][j][k][BB][3][0] = tmp1 * 2.0 * njac[i][j][k][3][0];
+            lhs[i][j][k][BB][3][1] = tmp1 * 2.0 * njac[i][j][k][3][1];
+            lhs[i][j][k][BB][3][2] = tmp1 * 2.0 * njac[i][j][k][3][2];
+            lhs[i][j][k][BB][3][3] =
+                1.0 + tmp1 * 2.0 * njac[i][j][k][3][3] + tmp1 * 2.0 * dz4;
+            lhs[i][j][k][BB][3][4] = tmp1 * 2.0 * njac[i][j][k][3][4];
 
-        lhs[i][j][k][BB][4][0] = tmp1 * 2.0 * njac[i][j][k][4][0];
-        lhs[i][j][k][BB][4][1] = tmp1 * 2.0 * njac[i][j][k][4][1];
-        lhs[i][j][k][BB][4][2] = tmp1 * 2.0 * njac[i][j][k][4][2];
-        lhs[i][j][k][BB][4][3] = tmp1 * 2.0 * njac[i][j][k][4][3];
-        lhs[i][j][k][BB][4][4] =
-            1.0 + tmp1 * 2.0 * njac[i][j][k][4][4] + tmp1 * 2.0 * dz5;
+            lhs[i][j][k][BB][4][0] = tmp1 * 2.0 * njac[i][j][k][4][0];
+            lhs[i][j][k][BB][4][1] = tmp1 * 2.0 * njac[i][j][k][4][1];
+            lhs[i][j][k][BB][4][2] = tmp1 * 2.0 * njac[i][j][k][4][2];
+            lhs[i][j][k][BB][4][3] = tmp1 * 2.0 * njac[i][j][k][4][3];
+            lhs[i][j][k][BB][4][4] =
+                1.0 + tmp1 * 2.0 * njac[i][j][k][4][4] + tmp1 * 2.0 * dz5;
 
-        lhs[i][j][k][CC][0][0] = tmp2 * fjac[i][j][k + 1][0][0] -
-                                 tmp1 * njac[i][j][k + 1][0][0] - tmp1 * dz1;
-        lhs[i][j][k][CC][0][1] =
-            tmp2 * fjac[i][j][k + 1][0][1] - tmp1 * njac[i][j][k + 1][0][1];
-        lhs[i][j][k][CC][0][2] =
-            tmp2 * fjac[i][j][k + 1][0][2] - tmp1 * njac[i][j][k + 1][0][2];
-        lhs[i][j][k][CC][0][3] =
-            tmp2 * fjac[i][j][k + 1][0][3] - tmp1 * njac[i][j][k + 1][0][3];
-        lhs[i][j][k][CC][0][4] =
-            tmp2 * fjac[i][j][k + 1][0][4] - tmp1 * njac[i][j][k + 1][0][4];
+            lhs[i][j][k][CC][0][0] = tmp2 * fjac[i][j][k + 1][0][0] -
+                                     tmp1 * njac[i][j][k + 1][0][0] -
+                                     tmp1 * dz1;
+            lhs[i][j][k][CC][0][1] =
+                tmp2 * fjac[i][j][k + 1][0][1] - tmp1 * njac[i][j][k + 1][0][1];
+            lhs[i][j][k][CC][0][2] =
+                tmp2 * fjac[i][j][k + 1][0][2] - tmp1 * njac[i][j][k + 1][0][2];
+            lhs[i][j][k][CC][0][3] =
+                tmp2 * fjac[i][j][k + 1][0][3] - tmp1 * njac[i][j][k + 1][0][3];
+            lhs[i][j][k][CC][0][4] =
+                tmp2 * fjac[i][j][k + 1][0][4] - tmp1 * njac[i][j][k + 1][0][4];
 
-        lhs[i][j][k][CC][1][0] =
-            tmp2 * fjac[i][j][k + 1][1][0] - tmp1 * njac[i][j][k + 1][1][0];
-        lhs[i][j][k][CC][1][1] = tmp2 * fjac[i][j][k + 1][1][1] -
-                                 tmp1 * njac[i][j][k + 1][1][1] - tmp1 * dz2;
-        lhs[i][j][k][CC][1][2] =
-            tmp2 * fjac[i][j][k + 1][1][2] - tmp1 * njac[i][j][k + 1][1][2];
-        lhs[i][j][k][CC][1][3] =
-            tmp2 * fjac[i][j][k + 1][1][3] - tmp1 * njac[i][j][k + 1][1][3];
-        lhs[i][j][k][CC][1][4] =
-            tmp2 * fjac[i][j][k + 1][1][4] - tmp1 * njac[i][j][k + 1][1][4];
+            lhs[i][j][k][CC][1][0] =
+                tmp2 * fjac[i][j][k + 1][1][0] - tmp1 * njac[i][j][k + 1][1][0];
+            lhs[i][j][k][CC][1][1] = tmp2 * fjac[i][j][k + 1][1][1] -
+                                     tmp1 * njac[i][j][k + 1][1][1] -
+                                     tmp1 * dz2;
+            lhs[i][j][k][CC][1][2] =
+                tmp2 * fjac[i][j][k + 1][1][2] - tmp1 * njac[i][j][k + 1][1][2];
+            lhs[i][j][k][CC][1][3] =
+                tmp2 * fjac[i][j][k + 1][1][3] - tmp1 * njac[i][j][k + 1][1][3];
+            lhs[i][j][k][CC][1][4] =
+                tmp2 * fjac[i][j][k + 1][1][4] - tmp1 * njac[i][j][k + 1][1][4];
 
-        lhs[i][j][k][CC][2][0] =
-            tmp2 * fjac[i][j][k + 1][2][0] - tmp1 * njac[i][j][k + 1][2][0];
-        lhs[i][j][k][CC][2][1] =
-            tmp2 * fjac[i][j][k + 1][2][1] - tmp1 * njac[i][j][k + 1][2][1];
-        lhs[i][j][k][CC][2][2] = tmp2 * fjac[i][j][k + 1][2][2] -
-                                 tmp1 * njac[i][j][k + 1][2][2] - tmp1 * dz3;
-        lhs[i][j][k][CC][2][3] =
-            tmp2 * fjac[i][j][k + 1][2][3] - tmp1 * njac[i][j][k + 1][2][3];
-        lhs[i][j][k][CC][2][4] =
-            tmp2 * fjac[i][j][k + 1][2][4] - tmp1 * njac[i][j][k + 1][2][4];
+            lhs[i][j][k][CC][2][0] =
+                tmp2 * fjac[i][j][k + 1][2][0] - tmp1 * njac[i][j][k + 1][2][0];
+            lhs[i][j][k][CC][2][1] =
+                tmp2 * fjac[i][j][k + 1][2][1] - tmp1 * njac[i][j][k + 1][2][1];
+            lhs[i][j][k][CC][2][2] = tmp2 * fjac[i][j][k + 1][2][2] -
+                                     tmp1 * njac[i][j][k + 1][2][2] -
+                                     tmp1 * dz3;
+            lhs[i][j][k][CC][2][3] =
+                tmp2 * fjac[i][j][k + 1][2][3] - tmp1 * njac[i][j][k + 1][2][3];
+            lhs[i][j][k][CC][2][4] =
+                tmp2 * fjac[i][j][k + 1][2][4] - tmp1 * njac[i][j][k + 1][2][4];
 
-        lhs[i][j][k][CC][3][0] =
-            tmp2 * fjac[i][j][k + 1][3][0] - tmp1 * njac[i][j][k + 1][3][0];
-        lhs[i][j][k][CC][3][1] =
-            tmp2 * fjac[i][j][k + 1][3][1] - tmp1 * njac[i][j][k + 1][3][1];
-        lhs[i][j][k][CC][3][2] =
-            tmp2 * fjac[i][j][k + 1][3][2] - tmp1 * njac[i][j][k + 1][3][2];
-        lhs[i][j][k][CC][3][3] = tmp2 * fjac[i][j][k + 1][3][3] -
-                                 tmp1 * njac[i][j][k + 1][3][3] - tmp1 * dz4;
-        lhs[i][j][k][CC][3][4] =
-            tmp2 * fjac[i][j][k + 1][3][4] - tmp1 * njac[i][j][k + 1][3][4];
+            lhs[i][j][k][CC][3][0] =
+                tmp2 * fjac[i][j][k + 1][3][0] - tmp1 * njac[i][j][k + 1][3][0];
+            lhs[i][j][k][CC][3][1] =
+                tmp2 * fjac[i][j][k + 1][3][1] - tmp1 * njac[i][j][k + 1][3][1];
+            lhs[i][j][k][CC][3][2] =
+                tmp2 * fjac[i][j][k + 1][3][2] - tmp1 * njac[i][j][k + 1][3][2];
+            lhs[i][j][k][CC][3][3] = tmp2 * fjac[i][j][k + 1][3][3] -
+                                     tmp1 * njac[i][j][k + 1][3][3] -
+                                     tmp1 * dz4;
+            lhs[i][j][k][CC][3][4] =
+                tmp2 * fjac[i][j][k + 1][3][4] - tmp1 * njac[i][j][k + 1][3][4];
 
-        lhs[i][j][k][CC][4][0] =
-            tmp2 * fjac[i][j][k + 1][4][0] - tmp1 * njac[i][j][k + 1][4][0];
-        lhs[i][j][k][CC][4][1] =
-            tmp2 * fjac[i][j][k + 1][4][1] - tmp1 * njac[i][j][k + 1][4][1];
-        lhs[i][j][k][CC][4][2] =
-            tmp2 * fjac[i][j][k + 1][4][2] - tmp1 * njac[i][j][k + 1][4][2];
-        lhs[i][j][k][CC][4][3] =
-            tmp2 * fjac[i][j][k + 1][4][3] - tmp1 * njac[i][j][k + 1][4][3];
-        lhs[i][j][k][CC][4][4] = tmp2 * fjac[i][j][k + 1][4][4] -
-                                 tmp1 * njac[i][j][k + 1][4][4] - tmp1 * dz5;
-      });
+            lhs[i][j][k][CC][4][0] =
+                tmp2 * fjac[i][j][k + 1][4][0] - tmp1 * njac[i][j][k + 1][4][0];
+            lhs[i][j][k][CC][4][1] =
+                tmp2 * fjac[i][j][k + 1][4][1] - tmp1 * njac[i][j][k + 1][4][1];
+            lhs[i][j][k][CC][4][2] =
+                tmp2 * fjac[i][j][k + 1][4][2] - tmp1 * njac[i][j][k + 1][4][2];
+            lhs[i][j][k][CC][4][3] =
+                tmp2 * fjac[i][j][k + 1][4][3] - tmp1 * njac[i][j][k + 1][4][3];
+            lhs[i][j][k][CC][4][4] = tmp2 * fjac[i][j][k + 1][4][4] -
+                                     tmp1 * njac[i][j][k + 1][4][4] -
+                                     tmp1 * dz5;
+          });
     });
   });
 }
@@ -1686,25 +1698,25 @@ void compute_rhs(void) {
 c     compute the reciprocal of density, and the kinetic energy,
 c     and the speed of sound.
 c-------------------------------------------------------------------*/
-#warning Rewrite this with slide
-  auto irange = view::ints(0, grid_points[0]);
-  auto jrange = view::ints(0, grid_points[1]);
-  auto krange = view::ints(0, grid_points[2]);
-  NS::for_each(PARALLEL,irange.begin(), irange.end(), [&](auto i) -> void {
-    NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-      NS::for_each(PARALLELUNSEQ,krange.begin(), krange.end(), [&](auto k) -> void {
-        double rho_inv = 1.0 / u[i][j][k][0];
-        rho_i[i][j][k] = rho_inv;
-        us[i][j][k] = u[i][j][k][1] * rho_inv;
-        vs[i][j][k] = u[i][j][k][2] * rho_inv;
-        ws[i][j][k] = u[i][j][k][3] * rho_inv;
-        square[i][j][k] =
-            0.5 *
-            (u[i][j][k][1] * u[i][j][k][1] + u[i][j][k][2] * u[i][j][k][2] +
-             u[i][j][k][3] * u[i][j][k][3]) *
-            rho_inv;
-        qs[i][j][k] = square[i][j][k] * rho_inv;
-      });
+  MAKE_RANGE(0, grid_points[0], irange);
+  MAKE_RANGE(0, grid_points[1], jrange);
+  MAKE_RANGE(0, grid_points[2], krange);
+  NS::for_each(PARALLEL, irange.begin(), irange.end(), [&](auto i) -> void {
+    NS::for_each(NESTPAR, jrange.begin(), jrange.end(), [&](auto j) -> void {
+      NS::for_each(NESTPARUNSEQ, krange.begin(), krange.end(),
+                   [&](auto k) -> void {
+                     double rho_inv = 1.0 / u[i][j][k][0];
+                     rho_i[i][j][k] = rho_inv;
+                     us[i][j][k] = u[i][j][k][1] * rho_inv;
+                     vs[i][j][k] = u[i][j][k][2] * rho_inv;
+                     ws[i][j][k] = u[i][j][k][3] * rho_inv;
+                     square[i][j][k] = 0.5 *
+                                       (u[i][j][k][1] * u[i][j][k][1] +
+                                        u[i][j][k][2] * u[i][j][k][2] +
+                                        u[i][j][k][3] * u[i][j][k][3]) *
+                                       rho_inv;
+                     qs[i][j][k] = square[i][j][k] * rho_inv;
+                   });
     });
   });
 
@@ -1713,73 +1725,76 @@ c-------------------------------------------------------------------*/
   c this forcing term is known, we can store it on the whole grid
   c including the boundary
   c-------------------------------------------------------------------*/
-  irange = view::ints(0, grid_points[0]);
-  jrange = view::ints(0, grid_points[1]);
-  krange = view::ints(0, grid_points[2]);
-  auto mrange = view::ints(0, 5);
-  NS::for_each(PARALLEL,irange.begin(), irange.end(), [&](auto i) -> void {
-    NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-      NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto k) -> void {
-        NS::for_each(PARALLELUNSEQ,mrange.begin(), mrange.end(), [&](auto m) -> void {
-          rhs[i][j][k][m] = forcing[i][j][k][m];
-        });
+  MAKE_RANGE(0, 5, mrange)
+  NS::for_each(PARALLEL, irange.begin(), irange.end(), [&](auto i) -> void {
+    NS::for_each(NESTPAR, jrange.begin(), jrange.end(), [&](auto j) -> void {
+      NS::for_each(NESTPAR, krange.begin(), krange.end(), [&](auto k) -> void {
+        NS::for_each(
+            NESTPARUNSEQ, mrange.begin(), mrange.end(),
+            [&](auto m) -> void { rhs[i][j][k][m] = forcing[i][j][k][m]; });
       });
     });
   });
   /*--------------------------------------------------------------------
   c     compute xi-direction fluxes
   c-------------------------------------------------------------------*/
-  irange = view::ints(1, grid_points[0] - 1);
-  jrange = view::ints(1, grid_points[1] - 1);
-  krange = view::ints(1, grid_points[2] - 1);
-  NS::for_each(PARALLEL,irange.begin(), irange.end(), [&](auto i) -> void {
-    NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-      NS::for_each(PARALLELUNSEQ,krange.begin(), krange.end(), [&](auto k) -> void {
-        double uijk = us[i][j][k];
-        double up1 = us[i + 1][j][k];
-        double um1 = us[i - 1][j][k];
+  MAKE_RANGE_UNDEF(1, grid_points[0] - 1, irange)
+  MAKE_RANGE_UNDEF(1, grid_points[1] - 1, jrange)
+  MAKE_RANGE_UNDEF(1, grid_points[2] - 1, krange)
+  NS::for_each(PARALLEL, irange.begin(), irange.end(), [&](auto i) -> void {
+    NS::for_each(NESTPAR, jrange.begin(), jrange.end(), [&](auto j) -> void {
+      NS::for_each(
+          NESTPARUNSEQ, krange.begin(), krange.end(), [&](auto k) -> void {
+            double uijk = us[i][j][k];
+            double up1 = us[i + 1][j][k];
+            double um1 = us[i - 1][j][k];
 
-        rhs[i][j][k][0] = rhs[i][j][k][0] +
-                          dx1tx1 * (u[i + 1][j][k][0] - 2.0 * u[i][j][k][0] +
-                                    u[i - 1][j][k][0]) -
-                          tx2 * (u[i + 1][j][k][1] - u[i - 1][j][k][1]);
+            rhs[i][j][k][0] =
+                rhs[i][j][k][0] +
+                dx1tx1 * (u[i + 1][j][k][0] - 2.0 * u[i][j][k][0] +
+                          u[i - 1][j][k][0]) -
+                tx2 * (u[i + 1][j][k][1] - u[i - 1][j][k][1]);
 
-        rhs[i][j][k][1] =
-            rhs[i][j][k][1] +
-            dx2tx1 *
-                (u[i + 1][j][k][1] - 2.0 * u[i][j][k][1] + u[i - 1][j][k][1]) +
-            xxcon2 * con43 * (up1 - 2.0 * uijk + um1) -
-            tx2 * (u[i + 1][j][k][1] * up1 - u[i - 1][j][k][1] * um1 +
-                   (u[i + 1][j][k][4] - square[i + 1][j][k] -
-                    u[i - 1][j][k][4] + square[i - 1][j][k]) *
-                       c2);
+            rhs[i][j][k][1] =
+                rhs[i][j][k][1] +
+                dx2tx1 * (u[i + 1][j][k][1] - 2.0 * u[i][j][k][1] +
+                          u[i - 1][j][k][1]) +
+                xxcon2 * con43 * (up1 - 2.0 * uijk + um1) -
+                tx2 * (u[i + 1][j][k][1] * up1 - u[i - 1][j][k][1] * um1 +
+                       (u[i + 1][j][k][4] - square[i + 1][j][k] -
+                        u[i - 1][j][k][4] + square[i - 1][j][k]) *
+                           c2);
 
-        rhs[i][j][k][2] =
-            rhs[i][j][k][2] +
-            dx3tx1 *
-                (u[i + 1][j][k][2] - 2.0 * u[i][j][k][2] + u[i - 1][j][k][2]) +
-            xxcon2 * (vs[i + 1][j][k] - 2.0 * vs[i][j][k] + vs[i - 1][j][k]) -
-            tx2 * (u[i + 1][j][k][2] * up1 - u[i - 1][j][k][2] * um1);
+            rhs[i][j][k][2] =
+                rhs[i][j][k][2] +
+                dx3tx1 * (u[i + 1][j][k][2] - 2.0 * u[i][j][k][2] +
+                          u[i - 1][j][k][2]) +
+                xxcon2 *
+                    (vs[i + 1][j][k] - 2.0 * vs[i][j][k] + vs[i - 1][j][k]) -
+                tx2 * (u[i + 1][j][k][2] * up1 - u[i - 1][j][k][2] * um1);
 
-        rhs[i][j][k][3] =
-            rhs[i][j][k][3] +
-            dx4tx1 *
-                (u[i + 1][j][k][3] - 2.0 * u[i][j][k][3] + u[i - 1][j][k][3]) +
-            xxcon2 * (ws[i + 1][j][k] - 2.0 * ws[i][j][k] + ws[i - 1][j][k]) -
-            tx2 * (u[i + 1][j][k][3] * up1 - u[i - 1][j][k][3] * um1);
+            rhs[i][j][k][3] =
+                rhs[i][j][k][3] +
+                dx4tx1 * (u[i + 1][j][k][3] - 2.0 * u[i][j][k][3] +
+                          u[i - 1][j][k][3]) +
+                xxcon2 *
+                    (ws[i + 1][j][k] - 2.0 * ws[i][j][k] + ws[i - 1][j][k]) -
+                tx2 * (u[i + 1][j][k][3] * up1 - u[i - 1][j][k][3] * um1);
 
-        rhs[i][j][k][4] =
-            rhs[i][j][k][4] +
-            dx5tx1 *
-                (u[i + 1][j][k][4] - 2.0 * u[i][j][k][4] + u[i - 1][j][k][4]) +
-            xxcon3 * (qs[i + 1][j][k] - 2.0 * qs[i][j][k] + qs[i - 1][j][k]) +
-            xxcon4 * (up1 * up1 - 2.0 * uijk * uijk + um1 * um1) +
-            xxcon5 * (u[i + 1][j][k][4] * rho_i[i + 1][j][k] -
-                      2.0 * u[i][j][k][4] * rho_i[i][j][k] +
-                      u[i - 1][j][k][4] * rho_i[i - 1][j][k]) -
-            tx2 * ((c1 * u[i + 1][j][k][4] - c2 * square[i + 1][j][k]) * up1 -
-                   (c1 * u[i - 1][j][k][4] - c2 * square[i - 1][j][k]) * um1);
-      });
+            rhs[i][j][k][4] =
+                rhs[i][j][k][4] +
+                dx5tx1 * (u[i + 1][j][k][4] - 2.0 * u[i][j][k][4] +
+                          u[i - 1][j][k][4]) +
+                xxcon3 *
+                    (qs[i + 1][j][k] - 2.0 * qs[i][j][k] + qs[i - 1][j][k]) +
+                xxcon4 * (up1 * up1 - 2.0 * uijk * uijk + um1 * um1) +
+                xxcon5 * (u[i + 1][j][k][4] * rho_i[i + 1][j][k] -
+                          2.0 * u[i][j][k][4] * rho_i[i][j][k] +
+                          u[i - 1][j][k][4] * rho_i[i - 1][j][k]) -
+                tx2 *
+                    ((c1 * u[i + 1][j][k][4] - c2 * square[i + 1][j][k]) * up1 -
+                     (c1 * u[i - 1][j][k][4] - c2 * square[i - 1][j][k]) * um1);
+          });
     });
   });
 
@@ -1787,125 +1802,123 @@ c-------------------------------------------------------------------*/
   c     add fourth order xi-direction dissipation
   c-------------------------------------------------------------------*/
   int i = 1;
-  jrange = view::ints(1, grid_points[1] - 1);
-  krange = view::ints(1, grid_points[2] - 1);
-  mrange = view::ints(0, 5);
-  NS::for_each(PARALLEL,mrange.begin(), mrange.end(), [&](auto m) -> void {
-    NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-      NS::for_each(PARALLELUNSEQ,krange.begin(), krange.end(), [&](auto k) -> void {
-        rhs[i][j][k][m] = rhs[i][j][k][m] -
-                          dssp * (5.0 * u[i][j][k][m] -
-                                  4.0 * u[i + 1][j][k][m] + u[i + 2][j][k][m]);
-      });
+  NS::for_each(PARALLEL, mrange.begin(), mrange.end(), [&](auto m) -> void {
+    NS::for_each(NESTPAR, jrange.begin(), jrange.end(), [&](auto j) -> void {
+      NS::for_each(NESTPARUNSEQ, krange.begin(), krange.end(),
+                   [&](auto k) -> void {
+                     rhs[i][j][k][m] =
+                         rhs[i][j][k][m] -
+                         dssp * (5.0 * u[i][j][k][m] - 4.0 * u[i + 1][j][k][m] +
+                                 u[i + 2][j][k][m]);
+                   });
     });
   });
 
   i = 2;
-  jrange = view::ints(1, grid_points[1] - 1);
-  krange = view::ints(1, grid_points[2] - 1);
-  mrange = view::ints(0, 5);
-  NS::for_each(PARALLEL,mrange.begin(), mrange.end(), [&](auto m) -> void {
-    NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-      NS::for_each(PARALLELUNSEQ,krange.begin(), krange.end(), [&](auto k) -> void {
-        rhs[i][j][k][m] =
-            rhs[i][j][k][m] -
-            dssp * (-4.0 * u[i - 1][j][k][m] + 6.0 * u[i][j][k][m] -
-                    4.0 * u[i + 1][j][k][m] + u[i + 2][j][k][m]);
-      });
+  NS::for_each(PARALLEL, mrange.begin(), mrange.end(), [&](auto m) -> void {
+    NS::for_each(NESTPAR, jrange.begin(), jrange.end(), [&](auto j) -> void {
+      NS::for_each(
+          NESTPARUNSEQ, krange.begin(), krange.end(), [&](auto k) -> void {
+            rhs[i][j][k][m] =
+                rhs[i][j][k][m] -
+                dssp * (-4.0 * u[i - 1][j][k][m] + 6.0 * u[i][j][k][m] -
+                        4.0 * u[i + 1][j][k][m] + u[i + 2][j][k][m]);
+          });
     });
   });
-  irange = view::ints(3, grid_points[0] - 3);
-  jrange = view::ints(1, grid_points[1] - 1);
-  krange = view::ints(1, grid_points[2] - 1);
-  mrange = view::ints(0, 5);
-  NS::for_each(PARALLEL,irange.begin(), irange.end(), [&](auto i) -> void {
-    NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-      NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto k) -> void {
-        NS::for_each(PARALLELUNSEQ,mrange.begin(), mrange.end(), [&](auto m) -> void {
-          rhs[i][j][k][m] =
-              rhs[i][j][k][m] -
-              dssp * (u[i - 2][j][k][m] - 4.0 * u[i - 1][j][k][m] +
-                      6.0 * u[i][j][k][m] - 4.0 * u[i + 1][j][k][m] +
-                      u[i + 2][j][k][m]);
-        });
+  MAKE_RANGE_UNDEF(3, grid_points[0] - 3, irange)
+  NS::for_each(PARALLEL, irange.begin(), irange.end(), [&](auto i) -> void {
+    NS::for_each(NESTPAR, jrange.begin(), jrange.end(), [&](auto j) -> void {
+      NS::for_each(NESTPAR, krange.begin(), krange.end(), [&](auto k) -> void {
+        NS::for_each(NESTPARUNSEQ, mrange.begin(), mrange.end(),
+                     [&](auto m) -> void {
+                       rhs[i][j][k][m] =
+                           rhs[i][j][k][m] -
+                           dssp * (u[i - 2][j][k][m] - 4.0 * u[i - 1][j][k][m] +
+                                   6.0 * u[i][j][k][m] -
+                                   4.0 * u[i + 1][j][k][m] + u[i + 2][j][k][m]);
+                     });
       });
     });
   });
 
   i = grid_points[0] - 3;
-  jrange = view::ints(1, grid_points[1] - 1);
-  krange = view::ints(1, grid_points[2] - 1);
-  mrange = view::ints(0, 5);
-  NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-    NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto k) -> void {
-      NS::for_each(PARALLELUNSEQ,mrange.begin(), mrange.end(), [&](auto m) -> void {
-        rhs[i][j][k][m] =
-            rhs[i][j][k][m] -
-            dssp * (u[i - 2][j][k][m] - 4.0 * u[i - 1][j][k][m] +
-                    6.0 * u[i][j][k][m] - 4.0 * u[i + 1][j][k][m]);
-      });
+  NS::for_each(PARALLEL, jrange.begin(), jrange.end(), [&](auto j) -> void {
+    NS::for_each(NESTPAR, krange.begin(), krange.end(), [&](auto k) -> void {
+      NS::for_each(NESTPARUNSEQ, mrange.begin(), mrange.end(),
+                   [&](auto m) -> void {
+                     rhs[i][j][k][m] =
+                         rhs[i][j][k][m] -
+                         dssp * (u[i - 2][j][k][m] - 4.0 * u[i - 1][j][k][m] +
+                                 6.0 * u[i][j][k][m] - 4.0 * u[i + 1][j][k][m]);
+                   });
     });
   });
 
   i = grid_points[0] - 2;
-  NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-    NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto k) -> void {
-      NS::for_each(PARALLELUNSEQ,mrange.begin(), mrange.end(), [&](auto m) -> void {
-        rhs[i][j][k][m] = rhs[i][j][k][m] -
-                          dssp * (u[i - 2][j][k][m] - 4. * u[i - 1][j][k][m] +
-                                  5.0 * u[i][j][k][m]);
-      });
+  NS::for_each(PARALLEL, jrange.begin(), jrange.end(), [&](auto j) -> void {
+    NS::for_each(NESTPAR, krange.begin(), krange.end(), [&](auto k) -> void {
+      NS::for_each(
+          NESTPARUNSEQ, mrange.begin(), mrange.end(), [&](auto m) -> void {
+            rhs[i][j][k][m] = rhs[i][j][k][m] - dssp * (u[i - 2][j][k][m] -
+                                                        4. * u[i - 1][j][k][m] +
+                                                        5.0 * u[i][j][k][m]);
+          });
     });
   });
   /*--------------------------------------------------------------------
   c     compute eta-direction fluxes
   c-------------------------------------------------------------------*/
-  irange = view::ints(1, grid_points[0] - 1);
-  jrange = view::ints(1, grid_points[1] - 1);
-  krange = view::ints(1, grid_points[2] - 1);
-  NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-    NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto k) -> void {
-      NS::for_each(PARALLELUNSEQ,irange.begin(), irange.end(), [&](auto i) -> void {
-        double vijk = vs[i][j][k];
-        double vp1 = vs[i][j + 1][k];
-        double vm1 = vs[i][j - 1][k];
-        rhs[i][j][k][0] = rhs[i][j][k][0] +
-                          dy1ty1 * (u[i][j + 1][k][0] - 2.0 * u[i][j][k][0] +
-                                    u[i][j - 1][k][0]) -
-                          ty2 * (u[i][j + 1][k][2] - u[i][j - 1][k][2]);
-        rhs[i][j][k][1] =
-            rhs[i][j][k][1] +
-            dy2ty1 *
-                (u[i][j + 1][k][1] - 2.0 * u[i][j][k][1] + u[i][j - 1][k][1]) +
-            yycon2 * (us[i][j + 1][k] - 2.0 * us[i][j][k] + us[i][j - 1][k]) -
-            ty2 * (u[i][j + 1][k][1] * vp1 - u[i][j - 1][k][1] * vm1);
-        rhs[i][j][k][2] =
-            rhs[i][j][k][2] +
-            dy3ty1 *
-                (u[i][j + 1][k][2] - 2.0 * u[i][j][k][2] + u[i][j - 1][k][2]) +
-            yycon2 * con43 * (vp1 - 2.0 * vijk + vm1) -
-            ty2 * (u[i][j + 1][k][2] * vp1 - u[i][j - 1][k][2] * vm1 +
-                   (u[i][j + 1][k][4] - square[i][j + 1][k] -
-                    u[i][j - 1][k][4] + square[i][j - 1][k]) *
-                       c2);
-        rhs[i][j][k][3] =
-            rhs[i][j][k][3] +
-            dy4ty1 *
-                (u[i][j + 1][k][3] - 2.0 * u[i][j][k][3] + u[i][j - 1][k][3]) +
-            yycon2 * (ws[i][j + 1][k] - 2.0 * ws[i][j][k] + ws[i][j - 1][k]) -
-            ty2 * (u[i][j + 1][k][3] * vp1 - u[i][j - 1][k][3] * vm1);
-        rhs[i][j][k][4] =
-            rhs[i][j][k][4] +
-            dy5ty1 *
-                (u[i][j + 1][k][4] - 2.0 * u[i][j][k][4] + u[i][j - 1][k][4]) +
-            yycon3 * (qs[i][j + 1][k] - 2.0 * qs[i][j][k] + qs[i][j - 1][k]) +
-            yycon4 * (vp1 * vp1 - 2.0 * vijk * vijk + vm1 * vm1) +
-            yycon5 * (u[i][j + 1][k][4] * rho_i[i][j + 1][k] -
-                      2.0 * u[i][j][k][4] * rho_i[i][j][k] +
-                      u[i][j - 1][k][4] * rho_i[i][j - 1][k]) -
-            ty2 * ((c1 * u[i][j + 1][k][4] - c2 * square[i][j + 1][k]) * vp1 -
-                   (c1 * u[i][j - 1][k][4] - c2 * square[i][j - 1][k]) * vm1);
-      });
+  MAKE_RANGE_UNDEF(1, grid_points[0] - 1, irange)
+  NS::for_each(PARALLEL, jrange.begin(), jrange.end(), [&](auto j) -> void {
+    NS::for_each(NESTPAR, krange.begin(), krange.end(), [&](auto k) -> void {
+      NS::for_each(
+          NESTPARUNSEQ, irange.begin(), irange.end(), [&](auto i) -> void {
+            double vijk = vs[i][j][k];
+            double vp1 = vs[i][j + 1][k];
+            double vm1 = vs[i][j - 1][k];
+            rhs[i][j][k][0] =
+                rhs[i][j][k][0] +
+                dy1ty1 * (u[i][j + 1][k][0] - 2.0 * u[i][j][k][0] +
+                          u[i][j - 1][k][0]) -
+                ty2 * (u[i][j + 1][k][2] - u[i][j - 1][k][2]);
+            rhs[i][j][k][1] =
+                rhs[i][j][k][1] +
+                dy2ty1 * (u[i][j + 1][k][1] - 2.0 * u[i][j][k][1] +
+                          u[i][j - 1][k][1]) +
+                yycon2 *
+                    (us[i][j + 1][k] - 2.0 * us[i][j][k] + us[i][j - 1][k]) -
+                ty2 * (u[i][j + 1][k][1] * vp1 - u[i][j - 1][k][1] * vm1);
+            rhs[i][j][k][2] =
+                rhs[i][j][k][2] +
+                dy3ty1 * (u[i][j + 1][k][2] - 2.0 * u[i][j][k][2] +
+                          u[i][j - 1][k][2]) +
+                yycon2 * con43 * (vp1 - 2.0 * vijk + vm1) -
+                ty2 * (u[i][j + 1][k][2] * vp1 - u[i][j - 1][k][2] * vm1 +
+                       (u[i][j + 1][k][4] - square[i][j + 1][k] -
+                        u[i][j - 1][k][4] + square[i][j - 1][k]) *
+                           c2);
+            rhs[i][j][k][3] =
+                rhs[i][j][k][3] +
+                dy4ty1 * (u[i][j + 1][k][3] - 2.0 * u[i][j][k][3] +
+                          u[i][j - 1][k][3]) +
+                yycon2 *
+                    (ws[i][j + 1][k] - 2.0 * ws[i][j][k] + ws[i][j - 1][k]) -
+                ty2 * (u[i][j + 1][k][3] * vp1 - u[i][j - 1][k][3] * vm1);
+            rhs[i][j][k][4] =
+                rhs[i][j][k][4] +
+                dy5ty1 * (u[i][j + 1][k][4] - 2.0 * u[i][j][k][4] +
+                          u[i][j - 1][k][4]) +
+                yycon3 *
+                    (qs[i][j + 1][k] - 2.0 * qs[i][j][k] + qs[i][j - 1][k]) +
+                yycon4 * (vp1 * vp1 - 2.0 * vijk * vijk + vm1 * vm1) +
+                yycon5 * (u[i][j + 1][k][4] * rho_i[i][j + 1][k] -
+                          2.0 * u[i][j][k][4] * rho_i[i][j][k] +
+                          u[i][j - 1][k][4] * rho_i[i][j - 1][k]) -
+                ty2 *
+                    ((c1 * u[i][j + 1][k][4] - c2 * square[i][j + 1][k]) * vp1 -
+                     (c1 * u[i][j - 1][k][4] - c2 * square[i][j - 1][k]) * vm1);
+          });
     });
   });
 
@@ -1913,128 +1926,122 @@ c-------------------------------------------------------------------*/
   c     add fourth order eta-direction dissipation
   c-------------------------------------------------------------------*/
   int j = 1;
-  irange = view::ints(1, grid_points[0] - 1);
-  mrange = view::ints(0, 5);
-  krange = view::ints(1, grid_points[2] - 1);
-  NS::for_each(PARALLEL,mrange.begin(), mrange.end(), [&](auto m) -> void {
-    NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto k) -> void {
-      NS::for_each(PARALLELUNSEQ,irange.begin(), irange.end(), [&](auto i) -> void {
-        rhs[i][j][k][m] = rhs[i][j][k][m] -
-                          dssp * (5.0 * u[i][j][k][m] -
-                                  4.0 * u[i][j + 1][k][m] + u[i][j + 2][k][m]);
-      });
+  NS::for_each(PARALLEL, mrange.begin(), mrange.end(), [&](auto m) -> void {
+    NS::for_each(NESTPAR, krange.begin(), krange.end(), [&](auto k) -> void {
+      NS::for_each(NESTPARUNSEQ, irange.begin(), irange.end(),
+                   [&](auto i) -> void {
+                     rhs[i][j][k][m] =
+                         rhs[i][j][k][m] -
+                         dssp * (5.0 * u[i][j][k][m] - 4.0 * u[i][j + 1][k][m] +
+                                 u[i][j + 2][k][m]);
+                   });
     });
   });
   j = 2;
-  irange = view::ints(1, grid_points[0] - 1);
-  mrange = view::ints(0, 5);
-  krange = view::ints(1, grid_points[2] - 1);
-  NS::for_each(PARALLEL,mrange.begin(), mrange.end(), [&](auto m) -> void {
-    NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto k) -> void {
-      NS::for_each(PARALLELUNSEQ,irange.begin(), irange.end(), [&](auto i) -> void {
-        rhs[i][j][k][m] =
-            rhs[i][j][k][m] -
-            dssp * (-4.0 * u[i][j - 1][k][m] + 6.0 * u[i][j][k][m] -
-                    4.0 * u[i][j + 1][k][m] + u[i][j + 2][k][m]);
-      });
+  NS::for_each(PARALLEL, mrange.begin(), mrange.end(), [&](auto m) -> void {
+    NS::for_each(NESTPAR, krange.begin(), krange.end(), [&](auto k) -> void {
+      NS::for_each(
+          NESTPARUNSEQ, irange.begin(), irange.end(), [&](auto i) -> void {
+            rhs[i][j][k][m] =
+                rhs[i][j][k][m] -
+                dssp * (-4.0 * u[i][j - 1][k][m] + 6.0 * u[i][j][k][m] -
+                        4.0 * u[i][j + 1][k][m] + u[i][j + 2][k][m]);
+          });
     });
   });
-  irange = view::ints(1, grid_points[0] - 1);
-  jrange = view::ints(3, grid_points[1] - 3);
-  mrange = view::ints(0, 5);
-  krange = view::ints(1, grid_points[2] - 1);
-  NS::for_each(PARALLEL,mrange.begin(), mrange.end(), [&](auto m) -> void {
-    NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto k) -> void {
-      NS::for_each(PARALLEL,irange.begin(), irange.end(), [&](auto i) -> void {
-        NS::for_each(PARALLELUNSEQ,jrange.begin(), jrange.end(), [&](auto j) -> void {
-          rhs[i][j][k][m] =
-              rhs[i][j][k][m] -
-              dssp * (u[i][j - 2][k][m] - 4.0 * u[i][j - 1][k][m] +
-                      6.0 * u[i][j][k][m] - 4.0 * u[i][j + 1][k][m] +
-                      u[i][j + 2][k][m]);
-        });
+  MAKE_RANGE_UNDEF(3, grid_points[1] - 3, jrange)
+  NS::for_each(PARALLEL, mrange.begin(), mrange.end(), [&](auto m) -> void {
+    NS::for_each(NESTPAR, krange.begin(), krange.end(), [&](auto k) -> void {
+      NS::for_each(NESTPAR, irange.begin(), irange.end(), [&](auto i) -> void {
+        NS::for_each(NESTPARUNSEQ, jrange.begin(), jrange.end(),
+                     [&](auto j) -> void {
+                       rhs[i][j][k][m] =
+                           rhs[i][j][k][m] -
+                           dssp * (u[i][j - 2][k][m] - 4.0 * u[i][j - 1][k][m] +
+                                   6.0 * u[i][j][k][m] -
+                                   4.0 * u[i][j + 1][k][m] + u[i][j + 2][k][m]);
+                     });
       });
     });
   });
 
   j = grid_points[1] - 3;
-  irange = view::ints(1, grid_points[0] - 1);
-  mrange = view::ints(0, 5);
-  krange = view::ints(1, grid_points[2] - 1);
-  NS::for_each(PARALLEL,mrange.begin(), mrange.end(), [&](auto m) -> void {
-    NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto k) -> void {
-      NS::for_each(PARALLELUNSEQ,irange.begin(), irange.end(), [&](auto i) -> void {
-        rhs[i][j][k][m] =
-            rhs[i][j][k][m] -
-            dssp * (u[i][j - 2][k][m] - 4.0 * u[i][j - 1][k][m] +
-                    6.0 * u[i][j][k][m] - 4.0 * u[i][j + 1][k][m]);
-      });
+  NS::for_each(PARALLEL, mrange.begin(), mrange.end(), [&](auto m) -> void {
+    NS::for_each(NESTPAR, krange.begin(), krange.end(), [&](auto k) -> void {
+      NS::for_each(NESTPARUNSEQ, irange.begin(), irange.end(),
+                   [&](auto i) -> void {
+                     rhs[i][j][k][m] =
+                         rhs[i][j][k][m] -
+                         dssp * (u[i][j - 2][k][m] - 4.0 * u[i][j - 1][k][m] +
+                                 6.0 * u[i][j][k][m] - 4.0 * u[i][j + 1][k][m]);
+                   });
     });
   });
 
   j = grid_points[1] - 2;
-  irange = view::ints(1, grid_points[0] - 1);
-  mrange = view::ints(0, 5);
-  krange = view::ints(1, grid_points[2] - 1);
-  NS::for_each(PARALLEL,mrange.begin(), mrange.end(), [&](auto m) -> void {
-    NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto k) -> void {
-      NS::for_each(PARALLELUNSEQ,irange.begin(), irange.end(), [&](auto i) -> void {
-        rhs[i][j][k][m] = rhs[i][j][k][m] -
-                          dssp * (u[i][j - 2][k][m] - 4. * u[i][j - 1][k][m] +
-                                  5. * u[i][j][k][m]);
-      });
+  NS::for_each(PARALLEL, mrange.begin(), mrange.end(), [&](auto m) -> void {
+    NS::for_each(NESTPAR, krange.begin(), krange.end(), [&](auto k) -> void {
+      NS::for_each(
+          NESTPARUNSEQ, irange.begin(), irange.end(), [&](auto i) -> void {
+            rhs[i][j][k][m] = rhs[i][j][k][m] - dssp * (u[i][j - 2][k][m] -
+                                                        4. * u[i][j - 1][k][m] +
+                                                        5. * u[i][j][k][m]);
+          });
     });
   });
   /*--------------------------------------------------------------------
   c     compute zeta-direction fluxes
   c-------------------------------------------------------------------*/
-  irange = view::ints(1, grid_points[0] - 1);
-  jrange = view::ints(1, grid_points[1] - 1);
-  krange = view::ints(1, grid_points[2] - 1);
-  NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-    NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto k) -> void {
-      NS::for_each(PARALLELUNSEQ,irange.begin(), irange.end(), [&](auto i) -> void {
-        double wijk = ws[i][j][k];
-        double wp1 = ws[i][j][k + 1];
-        double wm1 = ws[i][j][k - 1];
+  NS::for_each(PARALLEL, jrange.begin(), jrange.end(), [&](auto j) -> void {
+    NS::for_each(NESTPAR, krange.begin(), krange.end(), [&](auto k) -> void {
+      NS::for_each(
+          NESTPARUNSEQ, irange.begin(), irange.end(), [&](auto i) -> void {
+            double wijk = ws[i][j][k];
+            double wp1 = ws[i][j][k + 1];
+            double wm1 = ws[i][j][k - 1];
 
-        rhs[i][j][k][0] = rhs[i][j][k][0] +
-                          dz1tz1 * (u[i][j][k + 1][0] - 2.0 * u[i][j][k][0] +
-                                    u[i][j][k - 1][0]) -
-                          tz2 * (u[i][j][k + 1][3] - u[i][j][k - 1][3]);
-        rhs[i][j][k][1] =
-            rhs[i][j][k][1] +
-            dz2tz1 *
-                (u[i][j][k + 1][1] - 2.0 * u[i][j][k][1] + u[i][j][k - 1][1]) +
-            zzcon2 * (us[i][j][k + 1] - 2.0 * us[i][j][k] + us[i][j][k - 1]) -
-            tz2 * (u[i][j][k + 1][1] * wp1 - u[i][j][k - 1][1] * wm1);
-        rhs[i][j][k][2] =
-            rhs[i][j][k][2] +
-            dz3tz1 *
-                (u[i][j][k + 1][2] - 2.0 * u[i][j][k][2] + u[i][j][k - 1][2]) +
-            zzcon2 * (vs[i][j][k + 1] - 2.0 * vs[i][j][k] + vs[i][j][k - 1]) -
-            tz2 * (u[i][j][k + 1][2] * wp1 - u[i][j][k - 1][2] * wm1);
-        rhs[i][j][k][3] =
-            rhs[i][j][k][3] +
-            dz4tz1 *
-                (u[i][j][k + 1][3] - 2.0 * u[i][j][k][3] + u[i][j][k - 1][3]) +
-            zzcon2 * con43 * (wp1 - 2.0 * wijk + wm1) -
-            tz2 * (u[i][j][k + 1][3] * wp1 - u[i][j][k - 1][3] * wm1 +
-                   (u[i][j][k + 1][4] - square[i][j][k + 1] -
-                    u[i][j][k - 1][4] + square[i][j][k - 1]) *
-                       c2);
-        rhs[i][j][k][4] =
-            rhs[i][j][k][4] +
-            dz5tz1 *
-                (u[i][j][k + 1][4] - 2.0 * u[i][j][k][4] + u[i][j][k - 1][4]) +
-            zzcon3 * (qs[i][j][k + 1] - 2.0 * qs[i][j][k] + qs[i][j][k - 1]) +
-            zzcon4 * (wp1 * wp1 - 2.0 * wijk * wijk + wm1 * wm1) +
-            zzcon5 * (u[i][j][k + 1][4] * rho_i[i][j][k + 1] -
-                      2.0 * u[i][j][k][4] * rho_i[i][j][k] +
-                      u[i][j][k - 1][4] * rho_i[i][j][k - 1]) -
-            tz2 * ((c1 * u[i][j][k + 1][4] - c2 * square[i][j][k + 1]) * wp1 -
-                   (c1 * u[i][j][k - 1][4] - c2 * square[i][j][k - 1]) * wm1);
-      });
+            rhs[i][j][k][0] =
+                rhs[i][j][k][0] +
+                dz1tz1 * (u[i][j][k + 1][0] - 2.0 * u[i][j][k][0] +
+                          u[i][j][k - 1][0]) -
+                tz2 * (u[i][j][k + 1][3] - u[i][j][k - 1][3]);
+            rhs[i][j][k][1] =
+                rhs[i][j][k][1] +
+                dz2tz1 * (u[i][j][k + 1][1] - 2.0 * u[i][j][k][1] +
+                          u[i][j][k - 1][1]) +
+                zzcon2 *
+                    (us[i][j][k + 1] - 2.0 * us[i][j][k] + us[i][j][k - 1]) -
+                tz2 * (u[i][j][k + 1][1] * wp1 - u[i][j][k - 1][1] * wm1);
+            rhs[i][j][k][2] =
+                rhs[i][j][k][2] +
+                dz3tz1 * (u[i][j][k + 1][2] - 2.0 * u[i][j][k][2] +
+                          u[i][j][k - 1][2]) +
+                zzcon2 *
+                    (vs[i][j][k + 1] - 2.0 * vs[i][j][k] + vs[i][j][k - 1]) -
+                tz2 * (u[i][j][k + 1][2] * wp1 - u[i][j][k - 1][2] * wm1);
+            rhs[i][j][k][3] =
+                rhs[i][j][k][3] +
+                dz4tz1 * (u[i][j][k + 1][3] - 2.0 * u[i][j][k][3] +
+                          u[i][j][k - 1][3]) +
+                zzcon2 * con43 * (wp1 - 2.0 * wijk + wm1) -
+                tz2 * (u[i][j][k + 1][3] * wp1 - u[i][j][k - 1][3] * wm1 +
+                       (u[i][j][k + 1][4] - square[i][j][k + 1] -
+                        u[i][j][k - 1][4] + square[i][j][k - 1]) *
+                           c2);
+            rhs[i][j][k][4] =
+                rhs[i][j][k][4] +
+                dz5tz1 * (u[i][j][k + 1][4] - 2.0 * u[i][j][k][4] +
+                          u[i][j][k - 1][4]) +
+                zzcon3 *
+                    (qs[i][j][k + 1] - 2.0 * qs[i][j][k] + qs[i][j][k - 1]) +
+                zzcon4 * (wp1 * wp1 - 2.0 * wijk * wijk + wm1 * wm1) +
+                zzcon5 * (u[i][j][k + 1][4] * rho_i[i][j][k + 1] -
+                          2.0 * u[i][j][k][4] * rho_i[i][j][k] +
+                          u[i][j][k - 1][4] * rho_i[i][j][k - 1]) -
+                tz2 *
+                    ((c1 * u[i][j][k + 1][4] - c2 * square[i][j][k + 1]) * wp1 -
+                     (c1 * u[i][j][k - 1][4] - c2 * square[i][j][k - 1]) * wm1);
+          });
     });
   });
 
@@ -2042,88 +2049,77 @@ c-------------------------------------------------------------------*/
   c     add fourth order zeta-direction dissipation
   c-------------------------------------------------------------------*/
   int k = 1;
-  irange = view::ints(1, grid_points[0] - 1);
-  mrange = view::ints(0, 5);
-  jrange = view::ints(1, grid_points[1] - 1);
-  NS::for_each(PARALLEL,mrange.begin(), mrange.end(), [&](auto m) -> void {
-    NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-      NS::for_each(PARALLELUNSEQ,irange.begin(), irange.end(), [&](auto i) -> void {
-        rhs[i][j][k][m] = rhs[i][j][k][m] -
-                          dssp * (5.0 * u[i][j][k][m] -
-                                  4.0 * u[i][j][k + 1][m] + u[i][j][k + 2][m]);
-      });
+  NS::for_each(PARALLEL, mrange.begin(), mrange.end(), [&](auto m) -> void {
+    NS::for_each(NESTPAR, jrange.begin(), jrange.end(), [&](auto j) -> void {
+      NS::for_each(NESTPARUNSEQ, irange.begin(), irange.end(),
+                   [&](auto i) -> void {
+                     rhs[i][j][k][m] =
+                         rhs[i][j][k][m] -
+                         dssp * (5.0 * u[i][j][k][m] - 4.0 * u[i][j][k + 1][m] +
+                                 u[i][j][k + 2][m]);
+                   });
     });
   });
   k = 2;
-  irange = view::ints(1, grid_points[0] - 1);
-  mrange = view::ints(0, 5);
-  jrange = view::ints(1, grid_points[1] - 1);
-  NS::for_each(PARALLEL,mrange.begin(), mrange.end(), [&](auto m) -> void {
-    NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-      NS::for_each(PARALLELUNSEQ,irange.begin(), irange.end(), [&](auto i) -> void {
-        rhs[i][j][k][m] =
-            rhs[i][j][k][m] -
-            dssp * (-4.0 * u[i][j][k - 1][m] + 6.0 * u[i][j][k][m] -
-                    4.0 * u[i][j][k + 1][m] + u[i][j][k + 2][m]);
-      });
+  NS::for_each(PARALLEL, mrange.begin(), mrange.end(), [&](auto m) -> void {
+    NS::for_each(NESTPAR, jrange.begin(), jrange.end(), [&](auto j) -> void {
+      NS::for_each(
+          NESTPARUNSEQ, irange.begin(), irange.end(), [&](auto i) -> void {
+            rhs[i][j][k][m] =
+                rhs[i][j][k][m] -
+                dssp * (-4.0 * u[i][j][k - 1][m] + 6.0 * u[i][j][k][m] -
+                        4.0 * u[i][j][k + 1][m] + u[i][j][k + 2][m]);
+          });
     });
   });
-  irange = view::ints(1, grid_points[0] - 1);
-  krange = view::ints(3, grid_points[2] - 3);
-  jrange = view::ints(1, grid_points[1] - 1);
-  mrange = view::ints(0, 5);
-  NS::for_each(PARALLEL,mrange.begin(), mrange.end(), [&](auto m) -> void {
-    NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-      NS::for_each(PARALLEL,irange.begin(), irange.end(), [&](auto i) -> void {
-        NS::for_each(PARALLELUNSEQ,krange.begin(), krange.end(), [&](auto k) -> void {
-          rhs[i][j][k][m] =
-              rhs[i][j][k][m] -
-              dssp * (u[i][j][k - 2][m] - 4.0 * u[i][j][k - 1][m] +
-                      6.0 * u[i][j][k][m] - 4.0 * u[i][j][k + 1][m] +
-                      u[i][j][k + 2][m]);
-        });
+  MAKE_RANGE_UNDEF(3, grid_points[2] - 3, krange)
+  NS::for_each(PARALLEL, mrange.begin(), mrange.end(), [&](auto m) -> void {
+    NS::for_each(NESTPAR, jrange.begin(), jrange.end(), [&](auto j) -> void {
+      NS::for_each(NESTPAR, irange.begin(), irange.end(), [&](auto i) -> void {
+        NS::for_each(NESTPARUNSEQ, krange.begin(), krange.end(),
+                     [&](auto k) -> void {
+                       rhs[i][j][k][m] =
+                           rhs[i][j][k][m] -
+                           dssp * (u[i][j][k - 2][m] - 4.0 * u[i][j][k - 1][m] +
+                                   6.0 * u[i][j][k][m] -
+                                   4.0 * u[i][j][k + 1][m] + u[i][j][k + 2][m]);
+                     });
       });
     });
   });
 
   k = grid_points[2] - 3;
-  irange = view::ints(1, grid_points[0] - 1);
-  jrange = view::ints(1, grid_points[1] - 1);
-  mrange = view::ints(0, 5);
-  NS::for_each(PARALLEL,mrange.begin(), mrange.end(), [&](auto m) -> void {
-    NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-      NS::for_each(PARALLELUNSEQ,irange.begin(), irange.end(), [&](auto i) -> void {
-        rhs[i][j][k][m] =
-            rhs[i][j][k][m] -
-            dssp * (u[i][j][k - 2][m] - 4.0 * u[i][j][k - 1][m] +
-                    6.0 * u[i][j][k][m] - 4.0 * u[i][j][k + 1][m]);
-      });
+  MAKE_RANGE_UNDEF(1, grid_points[2] - 1, krange)
+  NS::for_each(PARALLEL, mrange.begin(), mrange.end(), [&](auto m) -> void {
+    NS::for_each(NESTPAR, jrange.begin(), jrange.end(), [&](auto j) -> void {
+      NS::for_each(NESTPARUNSEQ, irange.begin(), irange.end(),
+                   [&](auto i) -> void {
+                     rhs[i][j][k][m] =
+                         rhs[i][j][k][m] -
+                         dssp * (u[i][j][k - 2][m] - 4.0 * u[i][j][k - 1][m] +
+                                 6.0 * u[i][j][k][m] - 4.0 * u[i][j][k + 1][m]);
+                   });
     });
   });
 
   k = grid_points[2] - 2;
-  irange = view::ints(1, grid_points[0] - 1);
-  jrange = view::ints(1, grid_points[1] - 1);
-  mrange = view::ints(0, 5);
-  NS::for_each(PARALLEL,mrange.begin(), mrange.end(), [&](auto m) -> void {
-    NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-      NS::for_each(PARALLELUNSEQ,irange.begin(), irange.end(), [&](auto i) -> void {
-        rhs[i][j][k][m] = rhs[i][j][k][m] -
-                          dssp * (u[i][j][k - 2][m] - 4.0 * u[i][j][k - 1][m] +
-                                  5.0 * u[i][j][k][m]);
-      });
+  NS::for_each(PARALLEL, mrange.begin(), mrange.end(), [&](auto m) -> void {
+    NS::for_each(NESTPAR, jrange.begin(), jrange.end(), [&](auto j) -> void {
+      NS::for_each(NESTPARUNSEQ, irange.begin(), irange.end(),
+                   [&](auto i) -> void {
+                     rhs[i][j][k][m] =
+                         rhs[i][j][k][m] -
+                         dssp * (u[i][j][k - 2][m] - 4.0 * u[i][j][k - 1][m] +
+                                 5.0 * u[i][j][k][m]);
+                   });
     });
   });
-  irange = view::ints(1, grid_points[0] - 1);
-  krange = view::ints(1, grid_points[2] - 1);
-  jrange = view::ints(1, grid_points[1] - 1);
-  mrange = view::ints(0, 5);
-  NS::for_each(PARALLEL,mrange.begin(), mrange.end(), [&](auto m) -> void {
-    NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-      NS::for_each(PARALLEL,irange.begin(), irange.end(), [&](auto i) -> void {
-        NS::for_each(PARALLELUNSEQ,krange.begin(), krange.end(), [&](auto k) -> void {
-          rhs[i][j][k][m] = rhs[i][j][k][m] * dt;
-        });
+  NS::for_each(PARALLEL, mrange.begin(), mrange.end(), [&](auto m) -> void {
+    NS::for_each(PARALLEL, jrange.begin(), jrange.end(), [&](auto j) -> void {
+      NS::for_each(PARALLEL, irange.begin(), irange.end(), [&](auto i) -> void {
+        NS::for_each(
+            PARALLELUNSEQ, krange.begin(), krange.end(),
+            [&](auto k) -> void { rhs[i][j][k][m] = rhs[i][j][k][m] * dt; });
       });
     });
   });
@@ -2626,20 +2622,23 @@ void x_backsubstitute(void) {
   c-------------------------------------------------------------------*/
 
   // int i, j, k, m, n;
-  auto irange = view::ints(0, grid_points[0] - 1);
-  auto krange = view::ints(1, grid_points[2] - 1);
-  auto jrange = view::ints(1, grid_points[1] - 1);
-  auto mrange = view::ints(0, BLOCK_SIZE);
-  auto nrange = view::ints(0, BLOCK_SIZE);
-  NS::for_each(PARALLEL,mrange.begin(), mrange.end(), [&](auto m) -> void {
-    NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-      NS::for_each(PARALLEL,irange.begin(), irange.end(), [&](auto i) -> void {
-        NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto k) -> void {
-          NS::for_each(PARALLELUNSEQ,nrange.begin(), nrange.end(), [&](auto n) -> void {
-            rhs[i][j][k][m] =
-                rhs[i][j][k][m] - lhs[i][j][k][CC][m][n] * rhs[i + 1][j][k][n];
-          });
-        });
+  MAKE_RANGE(0, grid_points[0] - 1, irange)
+  MAKE_RANGE(1, grid_points[1] - 1, jrange)
+  MAKE_RANGE(1, grid_points[2] - 1, krange)
+  MAKE_RANGE(0, BLOCK_SIZE, mrange)
+  MAKE_RANGE(0, BLOCK_SIZE, nrange)
+  NS::for_each(PARALLEL, mrange.begin(), mrange.end(), [&](auto m) -> void {
+    NS::for_each(NESTPAR, jrange.begin(), jrange.end(), [&](auto j) -> void {
+      NS::for_each(NESTPAR, irange.begin(), irange.end(), [&](auto i) -> void {
+        NS::for_each(NESTPAR, krange.begin(), krange.end(),
+                     [&](auto k) -> void {
+                       NS::for_each(PARALLELUNSEQ, nrange.begin(), nrange.end(),
+                                    [&](auto n) -> void {
+                                      rhs[i][j][k][m] = rhs[i][j][k][m] -
+                                                        lhs[i][j][k][CC][m][n] *
+                                                            rhs[i + 1][j][k][n];
+                                    });
+                     });
       });
     });
   });
@@ -2665,10 +2664,10 @@ void x_solve_cell(void) {
   /*--------------------------------------------------------------------
   c     outer most do loops - sweeping in i direction
   c-------------------------------------------------------------------*/
-  auto krange = view::ints(1, grid_points[2] - 1);
-  auto jrange = view::ints(1, grid_points[1] - 1);
-  NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-    NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto k) -> void {
+  MAKE_RANGE(1, grid_points[1] - 1, jrange)
+  MAKE_RANGE(1, grid_points[2] - 1, krange)
+  NS::for_each(PARALLEL, jrange.begin(), jrange.end(), [&](auto j) -> void {
+    NS::for_each(NESTPAR, krange.begin(), krange.end(), [&](auto k) -> void {
       /*--------------------------------------------------------------------
       c     multiply c(0,j,k) by b_inverse and copy back to c
       c     multiply rhs(0) by b_inverse(0) and copy to rhs
@@ -2681,12 +2680,12 @@ void x_solve_cell(void) {
   c     begin inner most do loop
   c     do all the elements of the cell unless last
   c-------------------------------------------------------------------*/
-  auto irange = view::ints(1, isize);
-  krange = view::ints(1, grid_points[2] - 1);
-  jrange = view::ints(1, grid_points[1] - 1);
-  NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-    NS::for_each(PARALLEL,irange.begin(), irange.end(), [&](auto i) -> void {
-      NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto k) -> void {
+  MAKE_RANGE(1, isize, irange)
+  MAKE_RANGE_UNDEF(1, grid_points[2] - 1, krange)
+  MAKE_RANGE_UNDEF(1, grid_points[1] - 1, jrange)
+  NS::for_each(PARALLEL, jrange.begin(), jrange.end(), [&](auto j) -> void {
+    NS::for_each(NESTPAR, irange.begin(), irange.end(), [&](auto i) -> void {
+      NS::for_each(NESTPAR, krange.begin(), krange.end(), [&](auto k) -> void {
         /*--------------------------------------------------------------------
         c     rhs(i) = rhs(i) - A*rhs(i-1)
         c-------------------------------------------------------------------*/
@@ -2706,10 +2705,8 @@ void x_solve_cell(void) {
     });
   });
   int i = isize - 1;
-  krange = view::ints(1, grid_points[2] - 1);
-  jrange = view::ints(1, grid_points[1] - 1);
-  NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-    NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto k) -> void {
+  NS::for_each(PARALLEL, jrange.begin(), jrange.end(), [&](auto j) -> void {
+    NS::for_each(NESTPAR, krange.begin(), krange.end(), [&](auto k) -> void {
       /*--------------------------------------------------------------------
       c     rhs(isize) = rhs(isize) - A*rhs(isize-1)
       c-------------------------------------------------------------------*/
@@ -2741,8 +2738,8 @@ void matvec_sub(double ablock[5][5], double avec[5], double bvec[5]) {
   c     subtracts bvec=bvec - ablock*avec
   c-------------------------------------------------------------------*/
 
-  auto irange = view::ints(0, 5);
-  NS::for_each(PARALLELUNSEQ,irange.begin(), irange.end(), [&](auto i) -> void {
+  MAKE_RANGE(0, 5, irange)
+  NS::for_each(SEQ, irange.begin(), irange.end(), [&](auto i) -> void {
     /*--------------------------------------------------------------------
     c            rhs(i,ic,jc,kc,ccell) = rhs(i,ic,jc,kc,ccell)
     c     $           - lhs[i,1,ablock,ia,ja,ka,acell)*
@@ -2756,8 +2753,7 @@ void matvec_sub(double ablock[5][5], double avec[5], double bvec[5]) {
 /*--------------------------------------------------------------------
 --------------------------------------------------------------------*/
 
-void matmul_sub(double ablock[5][5], double bblock[5][5],
-		       double cblock[5][5]) {
+void matmul_sub(double ablock[5][5], double bblock[5][5], double cblock[5][5]) {
 
   /*--------------------------------------------------------------------
   --------------------------------------------------------------------*/
@@ -2765,12 +2761,8 @@ void matmul_sub(double ablock[5][5], double bblock[5][5],
   /*--------------------------------------------------------------------
   c     subtracts a(i,j,k) X b(i,j,k) from c(i,j,k)
   c-------------------------------------------------------------------*/
-
-  // int j;
-
-  // for (j = 0; j < 5; j++) {
-  auto jrange = view::ints(0, 5);
-  NS::for_each(PARALLELUNSEQ,jrange.begin(), jrange.end(), [&](auto j) -> void {
+  MAKE_RANGE(0, 5, jrange)
+  NS::for_each(SEQ, jrange.begin(), jrange.end(), [&](auto j) -> void {
     cblock[0][j] = cblock[0][j] - ablock[0][0] * bblock[0][j] -
                    ablock[0][1] * bblock[1][j] - ablock[0][2] * bblock[2][j] -
                    ablock[0][3] * bblock[3][j] - ablock[0][4] * bblock[4][j];
@@ -3231,20 +3223,23 @@ void y_backsubstitute(void) {
   c     so just use it
   c     after call u(jstart) will be sent to next cell
   c-------------------------------------------------------------------*/
-  auto irange = view::ints(1, grid_points[0] - 1);
-  auto krange = view::ints(1, grid_points[2] - 1);
-  auto jrange = view::ints(0, grid_points[1] - 1);
-  auto mrange = view::ints(0, BLOCK_SIZE);
-  auto nrange = view::ints(0, BLOCK_SIZE);
-  NS::for_each(PARALLEL,mrange.begin(), mrange.end(), [&](auto m) -> void {
-    NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-      NS::for_each(PARALLEL,irange.begin(), irange.end(), [&](auto i) -> void {
-        NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto k) -> void {
-          NS::for_each(PARALLELUNSEQ,nrange.begin(), nrange.end(), [&](auto n) -> void {
-            rhs[i][j][k][m] =
-                rhs[i][j][k][m] - lhs[i][j][k][CC][m][n] * rhs[i][j + 1][k][n];
-          });
-        });
+  MAKE_RANGE(1, grid_points[2] - 1, krange)
+  MAKE_RANGE(0, grid_points[1] - 1, jrange)
+  MAKE_RANGE(1, grid_points[0] - 1, irange)
+  MAKE_RANGE(0, BLOCK_SIZE, mrange)
+  MAKE_RANGE(0, BLOCK_SIZE, nrange)
+  NS::for_each(PARALLEL, mrange.begin(), mrange.end(), [&](auto m) -> void {
+    NS::for_each(NESTPAR, jrange.begin(), jrange.end(), [&](auto j) -> void {
+      NS::for_each(NESTPAR, irange.begin(), irange.end(), [&](auto i) -> void {
+        NS::for_each(NESTPAR, krange.begin(), krange.end(),
+                     [&](auto k) -> void {
+                       NS::for_each(NESTPARUNSEQ, nrange.begin(), nrange.end(),
+                                    [&](auto n) -> void {
+                                      rhs[i][j][k][m] = rhs[i][j][k][m] -
+                                                        lhs[i][j][k][CC][m][n] *
+                                                            rhs[i][j + 1][k][n];
+                                    });
+                     });
       });
     });
   });
@@ -3271,10 +3266,10 @@ void y_solve_cell(void) {
   // int i, j, k, jsize;
 
   int jsize = grid_points[1] - 1;
-  auto irange = view::ints(1, grid_points[0] - 1);
-  auto krange = view::ints(1, grid_points[2] - 1);
-  NS::for_each(PARALLEL,irange.begin(), irange.end(), [&](auto i) -> void {
-    NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto k) -> void {
+  MAKE_RANGE(1, grid_points[2] - 1, krange)
+  MAKE_RANGE(1, grid_points[0] - 1, irange)
+  NS::for_each(PARALLEL, irange.begin(), irange.end(), [&](auto i) -> void {
+    NS::for_each(NESTPAR, krange.begin(), krange.end(), [&](auto k) -> void {
       /*--------------------------------------------------------------------
       c     multiply c(i,0,k) by b_inverse and copy back to c
       c     multiply rhs(0) by b_inverse(0) and copy to rhs
@@ -3287,12 +3282,10 @@ void y_solve_cell(void) {
   c     begin inner most do loop
   c     do all the elements of the cell unless last
   c-------------------------------------------------------------------*/
-  irange = view::ints(1, grid_points[0] - 1);
-  krange = view::ints(1, grid_points[2] - 1);
-  auto jrange = view::ints(1, jsize);
-  NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-    NS::for_each(PARALLEL,irange.begin(), irange.end(), [&](auto i) -> void {
-      NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto k) -> void {
+  MAKE_RANGE(1, jsize, jrange)
+  NS::for_each(PARALLEL, jrange.begin(), jrange.end(), [&](auto j) -> void {
+    NS::for_each(NESTPAR, irange.begin(), irange.end(), [&](auto i) -> void {
+      NS::for_each(NESTPAR, krange.begin(), krange.end(), [&](auto k) -> void {
         /*--------------------------------------------------------------------
         c     subtract A*lhs_std::vector(j-1) from lhs_std::vector(j)
         c
@@ -3313,10 +3306,8 @@ void y_solve_cell(void) {
       });
     });
   });
-  irange = view::ints(1, grid_points[0] - 1);
-  krange = view::ints(1, grid_points[2] - 1);
-  NS::for_each(PARALLEL,irange.begin(), irange.end(), [&](auto i) -> void {
-    NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto k) -> void {
+  NS::for_each(PARALLEL, irange.begin(), irange.end(), [&](auto i) -> void {
+    NS::for_each(NESTPAR, krange.begin(), krange.end(), [&](auto k) -> void {
       /*--------------------------------------------------------------------
       c     rhs(jsize) = rhs(jsize) - A*rhs(jsize-1)
       c-------------------------------------------------------------------*/
@@ -3375,20 +3366,23 @@ void z_backsubstitute(void) {
   c     so just use it
   c     after call u(kstart) will be sent to next cell
   c-------------------------------------------------------------------*/
-  auto irange = view::ints(1, grid_points[0] - 1);
-  auto krange = view::ints(1, grid_points[2] - 1);
-  auto jrange = view::ints(0, grid_points[2] - 1);
-  auto mrange = view::ints(0, BLOCK_SIZE);
-  auto nrange = view::ints(0, BLOCK_SIZE);
-  NS::for_each(PARALLEL,mrange.begin(), mrange.end(), [&](auto m) -> void {
-    NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-      NS::for_each(PARALLEL,irange.begin(), irange.end(), [&](auto i) -> void {
-        NS::for_each(PARALLEL,krange.begin(), krange.end(), [&](auto k) -> void {
-          NS::for_each(PARALLELUNSEQ,nrange.begin(), nrange.end(), [&](auto n) -> void {
-            rhs[i][j][k][m] =
-                rhs[i][j][k][m] - lhs[i][j][k][CC][m][n] * rhs[i][j][k + 1][n];
-          });
-        });
+  MAKE_RANGE(1, grid_points[2] - 1, krange)
+  MAKE_RANGE(0, grid_points[1] - 1, jrange)
+  MAKE_RANGE(1, grid_points[0] - 1, irange)
+  MAKE_RANGE(0, BLOCK_SIZE, mrange)
+  MAKE_RANGE(0, BLOCK_SIZE, nrange)
+  NS::for_each(PARALLEL, mrange.begin(), mrange.end(), [&](auto m) -> void {
+    NS::for_each(NESTPAR, jrange.begin(), jrange.end(), [&](auto j) -> void {
+      NS::for_each(NESTPAR, irange.begin(), irange.end(), [&](auto i) -> void {
+        NS::for_each(NESTPAR, krange.begin(), krange.end(),
+                     [&](auto k) -> void {
+                       NS::for_each(NESTPARUNSEQ, nrange.begin(), nrange.end(),
+                                    [&](auto n) -> void {
+                                      rhs[i][j][k][m] = rhs[i][j][k][m] -
+                                                        lhs[i][j][k][CC][m][n] *
+                                                            rhs[i][j][k + 1][n];
+                                    });
+                     });
       });
     });
   });
@@ -3416,10 +3410,10 @@ void z_solve_cell(void) {
   /*--------------------------------------------------------------------
   c     outer most do loops - sweeping in i direction
   c-------------------------------------------------------------------*/
-  auto irange = view::ints(1, grid_points[0] - 1);
-  auto jrange = view::ints(1, grid_points[1] - 1);
-  NS::for_each(PARALLEL,irange.begin(), irange.end(), [=](auto i) -> void {
-    NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [=](auto j) -> void {
+  MAKE_RANGE(1, grid_points[0] - 1, irange)
+  MAKE_RANGE(1, grid_points[1] - 1, jrange)
+  NS::for_each(PARALLEL, irange.begin(), irange.end(), [=](auto i) -> void {
+    NS::for_each(NESTPAR, jrange.begin(), jrange.end(), [=](auto j) -> void {
       /*--------------------------------------------------------------------
       c     multiply c(i,j,0) by b_inverse and copy back to c
       c     multiply rhs(0) by b_inverse(0) and copy to rhs
@@ -3432,12 +3426,10 @@ void z_solve_cell(void) {
   c     begin inner most do loop
   c     do all the elements of the cell unless last
   c-------------------------------------------------------------------*/
-  auto krange = view::ints(1, ksize);
-  irange = view::ints(1, grid_points[0] - 1);
-  jrange = view::ints(1, grid_points[1] - 1);
-  NS::for_each(PARALLEL,irange.begin(), irange.end(), [=](auto i) -> void {
-    NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [=](auto j) -> void {
-      NS::for_each(PARALLEL,krange.begin(), krange.end(), [=](auto k) -> void {
+  MAKE_RANGE(1, ksize, krange);
+  NS::for_each(PARALLEL, irange.begin(), irange.end(), [=](auto i) -> void {
+    NS::for_each(NESTPAR, jrange.begin(), jrange.end(), [=](auto j) -> void {
+      NS::for_each(NESTPAR, krange.begin(), krange.end(), [=](auto k) -> void {
         /*--------------------------------------------------------------------
         c     subtract A*lhs_std::vector(k-1) from lhs_std::vector(k)
         c
@@ -3463,10 +3455,8 @@ void z_solve_cell(void) {
   /*--------------------------------------------------------------------
   c     Now finish up special cases for last cell
   c-------------------------------------------------------------------*/
-  irange = view::ints(1, grid_points[0] - 1);
-  jrange = view::ints(1, grid_points[1] - 1);
-  NS::for_each(PARALLEL,irange.begin(), irange.end(), [=](auto i) -> void {
-    NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [=](auto j) -> void {
+  NS::for_each(PARALLEL, irange.begin(), irange.end(), [=](auto i) -> void {
+    NS::for_each(NESTPAR, jrange.begin(), jrange.end(), [=](auto j) -> void {
       /*--------------------------------------------------------------------
       c     rhs(ksize) = rhs(ksize) - A*rhs(ksize-1)
       c-------------------------------------------------------------------*/

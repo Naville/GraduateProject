@@ -1,6 +1,6 @@
 /*--------------------------------------------------------------------
 
-  NAS Parallel Benchmarks 3.0 structured OpenMP C versions - CG
+  NAS SEQ Benchmarks 3.0 structured OpenMP C versions - CG
 
   This benchmark is an OpenMP C version of the NPB CG code.
 
@@ -16,7 +16,7 @@ UVSQ.
 
            http://pdplab.trc.rwcp.or.jp/pdperf/Omni/
 
-  Information on NAS Parallel Benchmarks 2.3 is available at:
+  Information on NAS SEQ Benchmarks 2.3 is available at:
 
            http://www.nas.nasa.gov/NAS/NPB/
 
@@ -46,13 +46,12 @@ c---------------------------------------------------------------------
 */
 
 #include "STL.hpp"
-#include "range.hpp"
-#include <range/v3/all.hpp>
 #include "npb-C.h"
 #include <iostream>
 #include <type_traits>
+#ifdef USE_RANGES
 using namespace ranges;
-#include "npbparams.h"
+#endif
 
 #define NZ NA *(NONZER + 1) * (NONZER + 1) + NA *(NONZER + 2)
 
@@ -66,23 +65,23 @@ static int lastrow;
 static int firstcol;
 static int lastcol;
 
-#ifdef CPU
-std::array<int,NZ+1> colidx;    /* colidx[1:NZ] */
-std::array<int,NA+1+1> rowstr; /* rowstr[1:NA+1] */
-std::array<int,2 * NA + 1 + 1> iv; /* iv[1:2*NA+1] */
-std::array<int,NZ+1> arow;       /* arow[1:NZ] */
-std::array<int,NZ+1> acol;       /* acol[1:NZ] */
-std::array<double,NA+1+1> v; /* v[1:NA+1] */
-std::array<double,NZ+1> aelt[NZ + 1];  /* aelt[1:NZ] */
-static double a[NZ + 1];     /* a[1:NZ] */
-static double x[NA + 2 + 1]; /* x[1:NA+2] */
-static double z[NA + 2 + 1]; /* z[1:NA+2] */
-static double p[NA + 2 + 1]; /* p[1:NA+2] */
-static double q[NA + 2 + 1]; /* q[1:NA+2] */
-static double r[NA + 2 + 1]; /* r[1:NA+2] */
-#elif defined(GPU)
+/* common /main_int_mem/ */
+static int colidx[NZ+1];	/* colidx[1:NZ] */
+static int rowstr[NA+1+1];	/* rowstr[1:NA+1] */
+static int iv[2*NA+1+1];	/* iv[1:2*NA+1] */
+static int arow[NZ+1];		/* arow[1:NZ] */
+static int acol[NZ+1];		/* acol[1:NZ] */
 
-#endif
+/* common /main_flt_mem/ */
+static double v[NA+1+1];	/* v[1:NA+1] */
+static double aelt[NZ+1];	/* aelt[1:NZ] */
+static double a[NZ+1];		/* a[1:NZ] */
+static double x[NA+2+1];	/* x[1:NA+2] */
+static double z[NA+2+1];	/* z[1:NA+2] */
+static double p[NA+2+1];	/* p[1:NA+2] */
+static double q[NA+2+1];	/* q[1:NA+2] */
+static double r[NA+2+1];	/* r[1:NA+2] */
+//static double w[NA+2+1];	/* w[1:NA+2] */
 
 static double amult;
 static double tran;
@@ -109,7 +108,6 @@ void vecset(int n, double v[], int iv[], int *nzv, int i, double val);
 --------------------------------------------------------------------*/
 
 int main(int argc, char **argv) {
-  int i, j, k, it;
   int nthreads = 1;
   double zeta;
   double rnorm;
@@ -144,7 +142,7 @@ int main(int argc, char **argv) {
     cls = 'U';
   }
 
-  printf("\n\n NAS Parallel Benchmarks 3.0 structured OpenMP C version"
+  printf("\n\n NAS SEQ Benchmarks 3.0 structured OpenMP C version"
          " - CG Benchmark\n");
   printf(" Size: %10d\n", NA);
   printf(" Iterations: %5d\n", NITER);
@@ -173,12 +171,11 @@ c        So:
 c        Shift the col index vals from actual (firstcol --> lastcol )
 c        to local, i.e., (1 --> lastcol-firstcol+1)
 c---------------------------------------------------------------------*/
-auto jrange=view::ints(0,1);
-auto irange=view::ints(0,1);
-    jrange=view::ints(1,lastrow - firstrow + 2);
+  MAKE_RANGE(0,1,irange)
+    MAKE_RANGE(1,lastrow - firstrow + 2,jrange);
     NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-      auto k2=view::ints(rowstr[j],rowstr[j + 1]);
-      NS::for_each(PARALLELUNSEQ,k2.begin(), k2.end(), [&](auto k) -> void {
+      MAKE_RANGE(rowstr[j],rowstr[j + 1],k2);
+      NS::for_each(NESTPARUNSEQ,k2.begin(), k2.end(), [&](auto k) -> void {
         colidx[k] = colidx[k] - firstcol + 1;
       });
     });
@@ -186,12 +183,12 @@ auto irange=view::ints(0,1);
 /*--------------------------------------------------------------------
 c  set starting vector to (1, 1, .... 1)
 c-------------------------------------------------------------------*/
-  irange=view::ints(1,NA+2);
+  MAKE_RANGE_UNDEF(1,NA+2,irange);
     NS::for_each(PARALLEL,irange.begin(), irange.end(), [&](auto i) -> void {
       x[i] = 1.0;
     });
-  jrange=view::ints(1,lastcol - firstcol + 2);
-    NS::for_each(PARALLELUNSEQ,jrange.begin(), jrange.end(), [&](auto j) -> void {
+  MAKE_RANGE_UNDEF(1,lastcol - firstcol + 2,jrange);
+    NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
       q[j] = 0.0;
       z[j] = 0.0;
       r[j] = 0.0;
@@ -205,7 +202,7 @@ c-------------------------------------------------------------------*/
   c---->                    (then reinit, start timing, to niter its)
   c-------------------------------------------------------------------*/
 
-  for (it = 1; it <= 1; it++) {
+  for (int it = 1; it <= 1; it++) {
 
     /*--------------------------------------------------------------------
     c  The call to the conjugate gradient routine:
@@ -225,8 +222,8 @@ c-------------------------------------------------------------------*/
 /*--------------------------------------------------------------------
 c  Normalize z to obtain x
 c-------------------------------------------------------------------*/
-    jrange=view::ints(1,lastcol - firstcol + 2);
-    NS::for_each(PARALLELUNSEQ,jrange.begin(), jrange.end(), [&](auto j) -> void {
+    MAKE_RANGE(1,lastcol - firstcol + 2,jrange);
+    NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
       x[j] = norm_temp12 * z[j];
     });
 
@@ -235,8 +232,8 @@ c-------------------------------------------------------------------*/
 /*--------------------------------------------------------------------
 c  set starting vector to (1, 1, .... 1)
 c-------------------------------------------------------------------*/
-  irange=view::ints(1,NA + 2);
-  NS::for_each(PARALLELUNSEQ,irange.begin(), irange.end(), [&](auto i) -> void {
+  MAKE_RANGE_UNDEF(1,NA + 2,irange);
+  NS::for_each(PARALLEL,irange.begin(), irange.end(), [&](auto i) -> void {
     x[i] = 1.0;
   });
   zeta = 0.0;
@@ -250,7 +247,7 @@ c-------------------------------------------------------------------*/
   c---->
   c-------------------------------------------------------------------*/
 
-  for (it = 1; it <= NITER; it++) {
+  for (int it = 1; it <= NITER; it++) {
 
     /*--------------------------------------------------------------------
     c  The call to the conjugate gradient routine:
@@ -263,7 +260,7 @@ c-------------------------------------------------------------------*/
     c  Also, find norm of z
     c  So, first: (z.z)
     c-------------------------------------------------------------------*/
-    auto tmprange=view::ints(1,lastcol - firstcol + 2);
+    MAKE_RANGE(1,lastcol - firstcol + 2,tmprange);
     norm_temp11=std::accumulate(tmprange.begin(),tmprange.end(),0.0,[=](double i,int j)->double{return i+x[j]*z[j];});
     norm_temp12=std::accumulate(&z[1],&z[lastcol - firstcol + 2],0.0,[=](double i,double j)->double{return i+j*j;});
     norm_temp12 = 1.0 / sqrt(norm_temp12);
@@ -278,8 +275,8 @@ c-------------------------------------------------------------------*/
 /*--------------------------------------------------------------------
 c  Normalize z to obtain x
 c-------------------------------------------------------------------*/
-    auto j2=view::ints(1,lastcol - firstcol + 2);
-    NS::for_each(PARALLELUNSEQ,j2.begin(), j2.end(), [&](auto j) -> void {
+    MAKE_RANGE(1,lastcol - firstcol + 2,j2);
+    NS::for_each(PARALLEL,j2.begin(), j2.end(), [&](auto j) -> void {
       x[j] = norm_temp12 * z[j];
     });
   } /* end of main iter inv pow meth */
@@ -348,12 +345,10 @@ c  CG algorithm
 c---------------------------------------------------------------------*/
 {
   static int callcount = 0;
-  double d, sum, rho, rho0, alpha, beta;
-  int i, j, k;
-  int cgit, cgitmax = 25;
+  double d,rho, rho0, alpha, beta;
 
   rho = 0.0;
-  auto jrange=view::ints(1,naa+2);
+  MAKE_RANGE(1,naa+2,jrange);
   /*--------------------------------------------------------------------
   c  Initialize the CG algorithm:
   c-------------------------------------------------------------------*/
@@ -376,11 +371,11 @@ c-------------------------------------------------------------------*/
     c  The conj grad iteration loop
     c---->
     c-------------------------------------------------------------------*/
-  for (cgit = 1; cgit <= cgitmax; cgit++) {
+  for (int cgit = 1; cgit <= 25; cgit++) {
     rho0 = rho;
     d = 0.0;
     rho = 0.0;
-#pragma omp parallel default(shared) private(j, k, sum, alpha, beta)           \
+#pragma omp parallel default(shared) private(alpha, beta)           \
     shared(d, rho0, rho)
     {
 
@@ -398,11 +393,11 @@ C        on the Cray t3d - overall speed of code is 1.5 times faster.
 */
 
 /* rolled version */
-      jrange=view::ints(1,lastrow - firstrow + 2);
+      MAKE_RANGE_UNDEF(1,lastrow - firstrow + 2,jrange);
       NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-        sum = 0.0;
-        auto k2=view::ints(rowstr[j],rowstr[j + 1]);
-        NS::for_each(PARALLELUNSEQ,k2.begin(), k2.end(), [&](auto k) -> void {
+        double sum = 0.0;
+        MAKE_RANGE(rowstr[j],rowstr[j + 1],k2);
+        NS::for_each(NESTPARUNSEQ,k2.begin(), k2.end(), [&](auto k) -> void {
           sum = sum + a[k] * p[colidx[k]];
         });
         q[j] = sum;
@@ -426,7 +421,7 @@ c  Obtain z = z + alpha*p
 c  and    r = r - alpha*q
 c---------------------------------------------------------------------*/
 #pragma omp for reduction(+:rho)
-	for (j = 1; j <= lastcol-firstcol+1; j++) {
+	for (int j = 1; j <= lastcol-firstcol+1; j++) {
             z[j] = z[j] + alpha*p[j];
             r[j] = r[j] - alpha*q[j];
             rho = rho + r[j]*r[j];
@@ -438,7 +433,7 @@ c---------------------------------------------------------------------*/
         c---------------------------------------------------------------------*/
 #warning FIXME: Precision Round-Off issues here
       /*jrange=view::ints(1,lastcol - firstcol + 2);
-        NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
+        NS::for_each(SEQ,jrange.begin(), jrange.end(), [&](auto j) -> void {
           z[j] = z[j] + alpha * p[j];
           r[j] = r[j] - alpha * q[j];
         });
@@ -455,12 +450,12 @@ c---------------------------------------------------------------------*/
 /*--------------------------------------------------------------------
 c  p = r + beta*p
 c-------------------------------------------------------------------*/
-      jrange = view::ints(1,lastcol - firstcol + 2);
-      NS::for_each(PARALLELUNSEQ,jrange.begin(), jrange.end(), [&](auto j) -> void {
+      MAKE_RANGE(1,lastcol - firstcol + 2,jrange);
+      NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
         p[j] = r[j] + beta * p[j];
       });
       callcount++;
-    } /* end omp parallel */
+    } /* end omp SEQ */
   }   /* end of do cgit=1,cgitmax */
 
   /*---------------------------------------------------------------------
@@ -468,11 +463,11 @@ c-------------------------------------------------------------------*/
   c  First, form A.z
   c  The partition submatrix-vector multiply
   c---------------------------------------------------------------------*/
-  sum = 0.0;
+  double sum = 0.0;
 
-    jrange=view::ints(1,lastrow - firstrow + 2);
+    MAKE_RANGE_UNDEF(1,lastrow - firstrow + 2,jrange);
     NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-      auto k2=view::ints(rowstr[j],rowstr[j + 1]);
+      MAKE_RANGE(rowstr[j],rowstr[j + 1],k2);
       double d=std::accumulate(k2.begin(),k2.end(),0.0,[=](double i,int k)->double{
         return i+a[k] * z[colidx[k]];
       });
@@ -482,7 +477,7 @@ c-------------------------------------------------------------------*/
 /*--------------------------------------------------------------------
 c  At this point, r contains A.z
 c-------------------------------------------------------------------*/
-    jrange=view::ints(1, lastcol - firstcol + 2);
+    MAKE_RANGE_UNDEF(1, lastcol - firstcol + 2,jrange);
     sum=std::accumulate(jrange.begin(),jrange.end(),0.0,[=](double i,int j)->double{
       double d = x[j] - r[j];
       return i+d*d;
@@ -542,7 +537,7 @@ void makea(int n, int nz, double a[], /* a[1:nz] */
 c  Initialize colidx(n+1 .. 2n) to zero.
 c  Used by sprnvc to mark nonzero positions
 c---------------------------------------------------------------------*/
-auto irange=view::ints(1,n+1);
+MAKE_RANGE(1,n+1,irange);
   NS::for_each(PARALLEL,irange.begin(), irange.end(), [&](auto i) -> void {
     colidx[n + i] = 0;
   });
@@ -625,8 +620,8 @@ c---------------------------------------------------------------------*/
   int nrows;
   int i, j, jajp1, nza, k, nzrow;
   double xi;
-  auto jrange = view::ints(1, n + 1);
-  auto irange = view::ints(0, 1);
+  MAKE_RANGE(1, n + 1,jrange);
+  MAKE_RANGE(0, 1,irange);
 
   /*--------------------------------------------------------------------
   c    how many rows of result
@@ -636,7 +631,7 @@ c---------------------------------------------------------------------*/
 /*--------------------------------------------------------------------
 c     ...count the number of triples in each row
 c-------------------------------------------------------------------*/
-jrange = view::ints(1, n+1);
+MAKE_RANGE_UNDEF(1, n+1,jrange);
 NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
     rowstr[j] = 0;
     mark[j] = FALSE;
@@ -661,17 +656,18 @@ NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
   /*---------------------------------------------------------------------
   c     ... preload data pages
   c---------------------------------------------------------------------*/
-  jrange = view::ints(0, nrows);
+  MAKE_RANGE_UNDEF(0, nrows,jrange);
   NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
-    auto k2range = view::ints(rowstr[j], rowstr[j + 1]);
-    NS::for_each(PARALLELUNSEQ,k2range.begin(), k2range.end(),
+    MAKE_RANGE(rowstr[j], rowstr[j + 1],k2range);
+    NS::for_each(NESTPARUNSEQ,k2range.begin(), k2range.end(),
                   [&](auto k) -> void { a[k] = 0.0; });
   });
   /*--------------------------------------------------------------------
   c     ... do a bucket sort of the triples on the row index
   c-------------------------------------------------------------------*/
-  auto nzarange = view::ints(1, nnza + 1);
-  NS::for_each(PARALLELUNSEQ,nzarange.begin(), nzarange.end(), [&](auto nza) -> void {
+  MAKE_RANGE(1, nnza + 1,nzarange);
+  //Note the data dependency here, we cant actually parallel this loop
+  NS::for_each(UNSEQ,nzarange.begin(), nzarange.end(), [&](auto nza) -> void {
     int j = arow[nza] - firstrow + 1;
     int k = rowstr[j];
     a[k] = aelt[nza];
@@ -691,7 +687,7 @@ NS::for_each(PARALLEL,jrange.begin(), jrange.end(), [&](auto j) -> void {
   c       ... generate the actual output rows by adding elements
   c-------------------------------------------------------------------*/
   nza = 0;
-  irange = view::ints(1, n+1);
+  MAKE_RANGE_UNDEF(1, n+1,irange);
   NS::for_each(PARALLELUNSEQ,irange.begin(), irange.end(), [&](auto i) -> void {
     x[i] = 0.0;
     mark[i] = FALSE;
